@@ -1,0 +1,12 @@
+google-genai==2.29.0
+google-auth==2.61.0
+requests==2.34.2
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+python-multipart==0.0.32
+python-dotenv==1.2.3
+jinja2==3.1.6
+weasyprint==70.0
+qrcode==8.2
+# Needed when STORE=firestore (Cloud Run)
+google-cloud-firestore>=2.16

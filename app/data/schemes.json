@@ -1,0 +1,54 @@
+{
+  "_readme": "Plain-language summaries of government health programmes. Amounts and eligibility change - verify every entry against the official source before the demo and fill in official_url. The agent must always tell users to confirm at the hospital's help desk.",
+  "schemes": [
+    {
+      "id": "health_insurance",
+      "name_en": "National Health Insurance (Health Insurance Board)",
+      "name_ne": "स्वास्थ्य बीमा (स्वास्थ्य बीमा बोर्ड)",
+      "keywords": ["insurance", "bima", "बीमा", "card", "premium", "any", "general", "cost", "money", "paisa", "पैसा", "खर्च"],
+      "summary_en": "A family health insurance scheme. Families pay a yearly contribution and can then use listed services at insurance-registered hospitals up to a yearly limit. Some groups (for example the ultra-poor, senior citizens and people with certain conditions) may get subsidised or free membership.",
+      "summary_ne": "परिवारले वार्षिक योगदान तिरेर बीमामा दर्ता भएका अस्पतालमा तोकिएको सीमासम्म सेवा लिन सकिने स्वास्थ्य बीमा कार्यक्रम। अति गरिब, ज्येष्ठ नागरिक र केही रोग भएका व्यक्तिलाई छुट वा निःशुल्क सदस्यता हुन सक्छ।",
+      "how_to_use_en": "Enrol at your ward or local insurance enrolment assistant. Bring your insurance card and citizenship/ID. Start at your first service point (registered health facility) and get a referral for bigger hospitals.",
+      "how_to_use_ne": "वडा वा स्थानीय बीमा दर्ता सहायकमार्फत दर्ता गर्नुहोस्। बीमा कार्ड र नागरिकता/परिचयपत्र लिएर जानुहोस्। पहिले आफ्नो पहिलो सेवा बिन्दुमा जानुहोस् र ठूलो अस्पतालका लागि रेफर लिनुहोस्।",
+      "official_url": null,
+      "verified": false
+    },
+    {
+      "id": "impoverished_citizens_treatment",
+      "name_en": "Treatment support for impoverished citizens with serious diseases",
+      "name_ne": "विपन्न नागरिक औषधि उपचार कार्यक्रम",
+      "keywords": ["cancer", "क्यान्सर", "heart", "मुटु", "kidney", "मिर्गौला", "dialysis", "डायलाइसिस", "transplant",
+                   "head injury", "spinal", "मेरुदण्ड", "alzheimer", "parkinson", "sickle", "poor", "गरिब", "bipanna", "विपन्न"],
+      "summary_en": "Financial support for treatment of selected serious diseases (such as cancer, heart disease, kidney disease, head and spinal injuries, Alzheimer's, Parkinson's and sickle cell anaemia) at listed hospitals, for citizens who cannot afford it.",
+      "summary_ne": "क्यान्सर, मुटु रोग, मिर्गौला रोग, टाउको र मेरुदण्डको चोट, अल्जाइमर, पार्किन्सन र सिकल सेल एनिमिया जस्ता गम्भीर रोगको उपचारका लागि तोकिएका अस्पतालमा आर्थिक सहायता।",
+      "how_to_use_en": "Ask the hospital's social service unit or help desk. You will usually need a doctor's diagnosis letter, citizenship and a recommendation from your ward/local government.",
+      "how_to_use_ne": "अस्पतालको सामाजिक सेवा इकाई वा सहायता कक्षमा सोध्नुहोस्। प्रायः डाक्टरको रोग पुष्टि पत्र, नागरिकता र वडा/स्थानीय तहको सिफारिस चाहिन्छ।",
+      "official_url": null,
+      "verified": false
+    },
+    {
+      "id": "safe_motherhood",
+      "name_en": "Safe motherhood (Aama) programme",
+      "name_ne": "आमा सुरक्षा कार्यक्रम",
+      "keywords": ["pregnan", "गर्भ", "delivery", "सुत्केरी", "birth", "प्रसूति", "aama", "आमा", "antenatal", "checkup"],
+      "summary_en": "Free delivery services at public health facilities, plus a transport incentive for mothers who give birth at a health facility and incentives for completing antenatal check-ups.",
+      "summary_ne": "सरकारी स्वास्थ्य संस्थामा निःशुल्क प्रसूति सेवा, स्वास्थ्य संस्थामा सुत्केरी हुने आमालाई यातायात खर्च र नियमित गर्भ जाँचका लागि प्रोत्साहन।",
+      "how_to_use_en": "Give birth at a government or programme-listed health facility and ask the staff about the Aama incentive.",
+      "how_to_use_ne": "सरकारी वा कार्यक्रममा सूचीकृत स्वास्थ्य संस्थामा सुत्केरी हुनुहोस् र आमा कार्यक्रमको सुविधाबारे कर्मचारीलाई सोध्नुहोस्।",
+      "official_url": null,
+      "verified": false
+    },
+    {
+      "id": "free_basic_services",
+      "name_en": "Free basic health services",
+      "name_ne": "निःशुल्क आधारभूत स्वास्थ्य सेवा",
+      "keywords": ["free", "निःशुल्क", "nishulka", "basic", "health post", "स्वास्थ्य चौकी", "medicine", "औषधि", "vaccine", "खोप"],
+      "summary_en": "Basic services, listed essential medicines and vaccinations are provided free at government health posts, primary health centres and many public hospitals.",
+      "summary_ne": "सरकारी स्वास्थ्य चौकी, प्राथमिक स्वास्थ्य केन्द्र र धेरै सरकारी अस्पतालमा आधारभूत सेवा, तोकिएका आवश्यक औषधि र खोप निःशुल्क पाइन्छ।",
+      "how_to_use_en": "Visit your nearest health post or primary health centre first; they can refer you onward if needed.",
+      "how_to_use_ne": "पहिले नजिकको स्वास्थ्य चौकी वा प्राथमिक स्वास्थ्य केन्द्र जानुहोस्; आवश्यक परे उनीहरूले रेफर गर्छन्।",
+      "official_url": null,
+      "verified": false
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "emergency": {"en": "Emergency", "ne": "आकस्मिक कक्ष", "about_en": "For sudden, serious illness or injury, open day and night.", "about_ne": "अचानक गम्भीर बिरामी वा चोटका लागि, दिनरात खुला।"},
+  "general_medicine": {"en": "General medicine", "ne": "जनरल मेडिसिन", "about_en": "First check-up for fever, pain, pressure, sugar and most common illnesses.", "about_ne": "ज्वरो, दुखाइ, प्रेसर, सुगर र धेरैजसो सामान्य रोगको पहिलो जाँच।"},
+  "general_surgery": {"en": "General surgery", "ne": "जनरल सर्जरी", "about_en": "Problems that may need an operation, such as lumps, hernia or appendix.", "about_ne": "अपरेसन चाहिन सक्ने समस्या, जस्तै गाँठो, हर्निया वा एपेन्डिक्स।"},
+  "cardiology": {"en": "Cardiology (heart)", "ne": "मुटु रोग विभाग", "about_en": "Heart problems: chest pain, fast heartbeat, high blood pressure that is hard to control.", "about_ne": "मुटुको समस्या: छाती दुखाइ, मुटुको धड्कन छिटो हुने, नियन्त्रण नहुने उच्च रक्तचाप।"},
+  "neurology": {"en": "Neurology (brain and nerves)", "ne": "स्नायु रोग विभाग", "about_en": "Brain and nerve problems: long-term headache, fits, numbness, weakness.", "about_ne": "दिमाग र स्नायुको समस्या: लामो समयको टाउको दुखाइ, छारे रोग, झमझमाउने, कमजोरी।"},
+  "neurosurgery": {"en": "Neurosurgery", "ne": "न्युरो सर्जरी", "about_en": "Operations on the brain and spine, and serious head or back injuries.", "about_ne": "दिमाग र ढाडको अपरेसन, र टाउको वा ढाडको गम्भीर चोट।"},
+  "orthopedics": {"en": "Orthopedics (bones and joints)", "ne": "हाडजोर्नी विभाग", "about_en": "Broken bones, joint pain, back pain and sports injuries.", "about_ne": "हड्डी भाँचिएको, जोर्नी दुख्ने, ढाड दुख्ने र खेलकुदको चोट।"},
+  "obstetrics_gynecology": {"en": "Obstetrics and gynecology", "ne": "प्रसूति तथा स्त्री रोग विभाग", "about_en": "Pregnancy check-ups, delivery, periods and women's health.", "about_ne": "गर्भ जाँच, सुत्केरी, महिनावारी र महिलाको स्वास्थ्य।"},
+  "pediatrics": {"en": "Pediatrics (children)", "ne": "बाल रोग विभाग", "about_en": "Illness in babies and children.", "about_ne": "शिशु र बालबालिकाको रोग।"},
+  "ophthalmology": {"en": "Eye department", "ne": "आँखा विभाग", "about_en": "Blurry vision, eye pain, red eyes, cataract and glasses.", "about_ne": "धमिलो देख्ने, आँखा दुख्ने, रातो हुने, मोतियाबिन्दु र चस्मा।"},
+  "ent": {"en": "ENT (ear, nose, throat)", "ne": "नाक, कान, घाँटी विभाग", "about_en": "Ear pain or discharge, hearing loss, sinus and throat problems.", "about_ne": "कान दुख्ने वा पिप आउने, सुन्न कम हुने, साइनस र घाँटीको समस्या।"},
+  "dermatology": {"en": "Skin department", "ne": "छाला विभाग", "about_en": "Rashes, itching, skin infections and hair or nail problems.", "about_ne": "डाबर, चिलाउने, छालाको संक्रमण र कपाल वा नङको समस्या।"},
+  "psychiatry": {"en": "Mental health", "ne": "मानसिक स्वास्थ्य विभाग", "about_en": "Sadness that does not go away, worry, sleep problems, addiction.", "about_ne": "नहट्ने उदासी, धेरै चिन्ता, निद्राको समस्या, लत।"},
+  "oncology": {"en": "Cancer care", "ne": "क्यान्सर उपचार विभाग", "about_en": "Diagnosis and treatment of cancer.", "about_ne": "क्यान्सरको पहिचान र उपचार।"},
+  "nephrology": {"en": "Kidney department", "ne": "मिर्गौला रोग विभाग", "about_en": "Kidney disease and dialysis.", "about_ne": "मिर्गौलाको रोग र डायलाइसिस।"},
+  "gastroenterology": {"en": "Stomach and liver", "ne": "पेट तथा कलेजो रोग विभाग", "about_en": "Long-term stomach pain, acidity, liver problems, jaundice.", "about_ne": "लामो समयको पेट दुखाइ, ग्यास्ट्रिक, कलेजोको समस्या, जन्डिस।"},
+  "pulmonology": {"en": "Lungs and chest", "ne": "फोक्सो रोग विभाग", "about_en": "Long cough, asthma, breathing problems, TB.", "about_ne": "लामो खोकी, दम, सास फेर्ने समस्या, क्षयरोग।"},
+  "urology": {"en": "Urology", "ne": "मूत्र रोग विभाग", "about_en": "Urine problems, kidney stones, prostate.", "about_ne": "पिसाबको समस्या, पत्थरी, प्रोस्टेट।"},
+  "dental": {"en": "Dental", "ne": "दाँत विभाग", "about_en": "Tooth pain, gum problems, cleaning and fillings.", "about_ne": "दाँत दुख्ने, गिजाको समस्या, सफा गर्ने र भर्ने।"},
+  "burns": {"en": "Burns unit", "ne": "पोलेको उपचार कक्ष", "about_en": "Treatment of serious burns.", "about_ne": "गम्भीर रूपमा पोलेको उपचार।"}
+}

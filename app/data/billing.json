@@ -1,0 +1,95 @@
+{
+  "_readme": "Typical billing process in Nepal by hospital type. This is general guidance, not hospital-specific: check with each hospital and put hospital-specific notes in hospitals.json -> billing_notes. Do not add fee amounts unless confirmed.",
+  "opd": {
+    "government": {
+      "en": [
+        "Go early in the morning. OPD tickets are usually given out in the morning and lines can be long.",
+        "At the registration (ticket) counter, say which department you need and pay for the OPD ticket. Keep the ticket: you need it at every step.",
+        "Wait outside the department's OPD room until your name or number is called.",
+        "If the doctor orders tests or an X-ray, pay at the billing (cash) counter first, keep the receipt, then go to the lab or X-ray room.",
+        "Bring the test results back to the same doctor.",
+        "Buy medicines at the hospital pharmacy or outside. Keep every bill and receipt."
+      ],
+      "ne": [
+        "बिहान सबेरै जानुहोस्। ओपीडी टिकट प्रायः बिहान मात्र दिइन्छ र लाइन लामो हुन सक्छ।",
+        "दर्ता (टिकट) काउन्टरमा कुन विभाग जाने भन्नुहोस् र ओपीडी टिकटको पैसा तिर्नुहोस्। टिकट नहराउनुहोस्, हरेक ठाउँमा चाहिन्छ।",
+        "आफ्नो नाम वा नम्बर नबोलाएसम्म विभागको ओपीडी कोठा बाहिर पर्खनुहोस्।",
+        "डाक्टरले जाँच वा एक्सरे लेखेमा पहिले बिलिङ (क्यास) काउन्टरमा पैसा तिर्नुहोस्, रसिद राख्नुहोस्, अनि प्रयोगशाला वा एक्सरे कोठामा जानुहोस्।",
+        "जाँचको नतिजा लिएर उही डाक्टरकहाँ फर्कनुहोस्।",
+        "औषधि अस्पतालको फार्मेसी वा बाहिरबाट किन्नुहोस्। सबै बिल र रसिद राख्नुहोस्।"
+      ]
+    },
+    "private": {
+      "en": [
+        "Call ahead if you can: many private hospitals let you book a doctor's appointment by phone.",
+        "Register at the front desk and pay the doctor's consultation fee before you see the doctor.",
+        "Before any test or procedure, ask the billing counter for the price. You pay before the test is done.",
+        "If the patient needs to stay in hospital, a deposit is usually asked for at admission. Ask how much, and ask for an itemised bill when you leave.",
+        "Keep every bill and receipt."
+      ],
+      "ne": [
+        "सकिन्छ भने पहिले फोन गर्नुहोस्: धेरै निजी अस्पतालमा फोनबाट डाक्टरको समय लिन सकिन्छ।",
+        "रिसेप्सनमा दर्ता गर्नुहोस् र डाक्टर भेट्नुअघि परामर्श शुल्क तिर्नुहोस्।",
+        "कुनै पनि जाँच वा उपचारअघि बिलिङ काउन्टरमा मूल्य सोध्नुहोस्। जाँच गर्नुअघि पैसा तिर्नुपर्छ।",
+        "भर्ना हुनुपरेमा प्रायः धरौटी (डिपोजिट) माग्छन्। कति हो सोध्नुहोस्, र डिस्चार्ज हुँदा विस्तृत बिल माग्नुहोस्।",
+        "सबै बिल र रसिद राख्नुहोस्।"
+      ]
+    },
+    "nonprofit": {
+      "en": [
+        "Register at the registration counter and pay the OPD or consultation fee.",
+        "Ask the billing counter for prices before tests; pay first, then go for the test.",
+        "Many non-profit and community hospitals have reduced-fee or free schemes for people who cannot pay: ask at the help desk.",
+        "Keep every bill and receipt."
+      ],
+      "ne": [
+        "दर्ता काउन्टरमा दर्ता गर्नुहोस् र ओपीडी वा परामर्श शुल्क तिर्नुहोस्।",
+        "जाँचअघि बिलिङ काउन्टरमा मूल्य सोध्नुहोस्; पहिले पैसा तिर्नुहोस्, अनि जाँचमा जानुहोस्।",
+        "धेरै सामुदायिक र गैरनाफामूलक अस्पतालमा तिर्न नसक्नेका लागि छुट वा निःशुल्क सेवा हुन्छ: सहायता कक्षमा सोध्नुहोस्।",
+        "सबै बिल र रसिद राख्नुहोस्।"
+      ]
+    }
+  },
+  "insurance": {
+    "en": [
+      "Bring your health insurance card (or number) and an ID card.",
+      "For a big hospital you usually need a referral slip from your first service point (the health facility where you registered), except in an emergency.",
+      "At the hospital, go to the health insurance counter before the billing counter. Covered services are charged to your insurance.",
+      "Ask which tests and medicines are covered, and how much of your yearly limit is left."
+    ],
+    "ne": [
+      "स्वास्थ्य बीमा कार्ड (वा बीमा नम्बर) र परिचयपत्र लिएर जानुहोस्।",
+      "ठूलो अस्पतालका लागि प्रायः आफ्नो पहिलो सेवा बिन्दु (बीमा दर्ता भएको स्वास्थ्य संस्था) बाट रेफर पुर्जा चाहिन्छ, आकस्मिक अवस्थामा बाहेक।",
+      "अस्पतालमा बिलिङ काउन्टरभन्दा पहिले स्वास्थ्य बीमा काउन्टरमा जानुहोस्। बीमाले समेट्ने सेवाको खर्च बीमाबाट जान्छ।",
+      "कुन जाँच र औषधि बीमाले समेट्छ, र वार्षिक सीमा कति बाँकी छ भनेर सोध्नुहोस्।"
+    ]
+  },
+  "emergency": {
+    "en": [
+      "Go straight to the emergency department. Treatment starts first; paperwork comes after.",
+      "One family member should do the registration and payment at the emergency billing counter while the patient is treated.",
+      "If the patient is admitted, many hospitals ask for a deposit. Ask for receipts for everything."
+    ],
+    "ne": [
+      "सिधै आकस्मिक कक्षमा जानुहोस्। पहिले उपचार सुरु हुन्छ, कागजी काम पछि।",
+      "बिरामीको उपचार हुँदै गर्दा परिवारको एक जनाले आकस्मिक बिलिङ काउन्टरमा दर्ता र भुक्तानी गर्नुहोस्।",
+      "भर्ना गर्नुपरेमा धेरै अस्पतालले धरौटी माग्छन्। सबै कुराको रसिद माग्नुहोस्।"
+    ]
+  },
+  "help": {
+    "en": "Cannot afford treatment? Ask for the Social Service Unit or help desk. Free or reduced-cost care may be available for people who are very poor, senior citizens, people with disabilities and some others. Bring your ID and a recommendation letter from your ward office.",
+    "ne": "उपचार खर्च धान्न सक्नुहुन्न? सामाजिक सेवा इकाई वा सहायता कक्ष खोज्नुहोस्। अति गरिब, ज्येष्ठ नागरिक, अपाङ्गता भएका व्यक्ति र अरू केहीलाई निःशुल्क वा छुटमा उपचार हुन सक्छ। परिचयपत्र र वडा कार्यालयको सिफारिस लिएर जानुहोस्।"
+  },
+  "inside": {
+    "en": [
+      "At the main gate, ask for the registration (ticket) counter.",
+      "After you get your ticket, ask the enquiry desk where the {department} OPD is.",
+      "Show your ticket at the OPD room and wait for your turn."
+    ],
+    "ne": [
+      "मूल गेटमा दर्ता (टिकट) काउन्टर कहाँ छ सोध्नुहोस्।",
+      "टिकट लिएपछि सोधपुछ कक्षमा {department} ओपीडी कहाँ छ सोध्नुहोस्।",
+      "ओपीडी कोठामा टिकट देखाउनुहोस् र पालो पर्खनुहोस्।"
+    ]
+  }
+}
