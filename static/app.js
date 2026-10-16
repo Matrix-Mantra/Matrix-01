@@ -35,6 +35,7 @@ const ICON = {
   nav: "M21 3 3 10.5l7 2.5 2.5 7z",
   back: "M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z",
   down: "M5 20h14v-2H5zM19 9h-4V3H9v6H5l7 7z",
+  speaker: "M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06A9 9 0 0 0 14 3.23z",
   share: "M18 16a3 3 0 0 0-2.4 1.2l-6.7-3.4a3 3 0 0 0 0-1.6l6.7-3.4A3 3 0 1 0 15 7l-6.7 3.4a3 3 0 1 0 0 3.2L15 17a3 3 0 1 0 3-1z",
 };
 
@@ -450,6 +451,7 @@ async function makeReport(text) {
     clearInterval(adv);
     S.report = r; store.set("ss_report", JSON.stringify(r), true);
     S.flow = { step: "idle", text: "" };
+    Voice.autoRead = true; // the person spoke, so they get the answer spoken back
     location.hash = "#/report";
   } catch (e) {
     clearInterval(adv);
@@ -457,6 +459,61 @@ async function makeReport(text) {
     S.flow = { step: "confirm", text, alarm };
     viewHelp(); toast(e.message);
   }
+}
+
+// ------------------------------------------------------------------ read aloud (browser speech, no server cost)
+const SPEECH_OK = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+const Voice = { playing: false, autoRead: false };
+
+// Nepali first; Hindi voices read Devanagari closely enough when no Nepali voice is installed.
+function pickVoice(lang) {
+  const voices = speechSynthesis.getVoices();
+  for (const prefix of lang === "ne" ? ["ne", "hi"] : ["en"]) {
+    const v = voices.find((x) => x.lang.toLowerCase().startsWith(prefix));
+    if (v) return v;
+  }
+  return null;
+}
+
+function reportSpeech(r) {
+  const top = r.hospitals[0];
+  const steps = r.do_now.map((s, i) => `${i + 1}. ${s}`).join(" ");
+  return [r.urgency_text, r.summary, `${t("doNow")}: ${steps}`, `${t("dept")}: ${r.department_label}`, top ? `${t("goTo")}: ${hName(top)}` : ""]
+    .filter(Boolean).join(" ");
+}
+
+function stopSpeaking() {
+  if (SPEECH_OK) speechSynthesis.cancel();
+  Voice.playing = false;
+}
+
+function speak(text, lang) {
+  if (!SPEECH_OK || !text) return;
+  stopSpeaking();
+  const voice = pickVoice(lang);
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = voice ? voice.lang : (lang === "ne" ? "ne-NP" : "en-US");
+  if (voice) u.voice = voice;
+  u.rate = 0.9;
+  u.onend = u.onerror = () => { Voice.playing = false; syncListen(); };
+  Voice.playing = true;
+  speechSynthesis.speak(u);
+}
+
+function listenButton() {
+  return el("button", { class: "secondary-btn listen", id: "listenBtn", type: "button", onclick: toggleListen });
+}
+
+function syncListen() {
+  const b = $("listenBtn");
+  if (!b) return;
+  b.replaceChildren(svg(Voice.playing ? ICON.stop : ICON.speaker), Voice.playing ? t("stopSpeaking") : t("listen"));
+}
+
+function toggleListen() {
+  if (Voice.playing) stopSpeaking();
+  else if (S.report) speak(reportSpeech(S.report), S.report.lang || S.lang);
+  syncListen();
 }
 
 // ------------------------------------------------------------------ report
@@ -471,6 +528,7 @@ function viewReport() {
     el("h1", { class: "r-title", text: r.title }),
     el("div", { class: `r-urgency u-${r.urgency}` }, el("b", { text: r.urgency_text }), r.urgency_reason),
     el("p", { text: r.summary }),
+    SPEECH_OK ? el("div", { class: "listen-row" }, listenButton()) : null,
     block(t("doNow"), stepsList(r.do_now)),
     el("section", { class: "block" }, el("h2", { text: t("dept") }),
       el("div", { class: "dept-box" }, el("b", { text: r.department_label }), el("p", { text: r.department_reason || r.department_about }))),
@@ -510,6 +568,7 @@ function viewReport() {
     el("button", { class: "secondary-btn", type: "button", onclick: shareReport }, t("share"))));
   parts.push(el("div", { class: "center" }, el("a", { class: "text-btn", href: "#/help", onclick: () => { S.flow = { step: "idle", text: "" }; } }, t("newReport"))));
   fill(v, parts);
+  if (Voice.autoRead) { Voice.autoRead = false; toggleListen(); }
 }
 
 async function downloadPdf() {
@@ -535,6 +594,7 @@ async function shareReport() {
 function route() {
   const hash = location.hash || "#/";
   const m = hash.match(/^#\/h\/(.+)$/);
+  stopSpeaking(); // leaving or re-rendering a page stops the spoken report
   window.scrollTo(0, 0);
   if (m) viewHospital(decodeURIComponent(m[1]));
   else if (hash.startsWith("#/help")) viewHelp();
