@@ -24,8 +24,10 @@ echo "Enabling APIs..."
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
   aiplatform.googleapis.com firestore.googleapis.com
 
-echo "Creating the Firestore database (skipped if it already exists)..."
-gcloud firestore databases create --location="$REGION" --type=firestore-native 2>/dev/null || true
+FIRESTORE_DATABASE="${FIRESTORE_DATABASE:-default}"
+echo "Creating the Firestore database '${FIRESTORE_DATABASE}' (skipped if it already exists)..."
+gcloud firestore databases create --database="$FIRESTORE_DATABASE" --location="$REGION" \
+  --type=firestore-native 2>/dev/null || true
 
 PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
 RUN_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
@@ -35,7 +37,7 @@ for ROLE in roles/aiplatform.user roles/datastore.user; do
 done
 
 ENV_VARS="GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=${GEMINI_LOCATION}"
-ENV_VARS+=",AUTH_MODE=firebase,STORE=firestore"
+ENV_VARS+=",AUTH_MODE=firebase,STORE=firestore,FIRESTORE_DATABASE=${FIRESTORE_DATABASE}"
 ENV_VARS+=",FIREBASE_API_KEY=${FIREBASE_API_KEY},FIREBASE_AUTH_DOMAIN=${FIREBASE_AUTH_DOMAIN}"
 ENV_VARS+=",FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-$PROJECT_ID},FIREBASE_APP_ID=${FIREBASE_APP_ID}"
 ENV_VARS+=",MAPS_EMBED_API_KEY=${MAPS_EMBED_API_KEY:-}"
