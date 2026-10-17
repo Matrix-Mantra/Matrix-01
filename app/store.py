@@ -111,7 +111,9 @@ class FirestoreStore:
         from google.cloud import firestore  # optional dependency
 
         self._fs = firestore
-        self.db = firestore.Client()
+        # project falls back to the credentials / Cloud Run metadata when FIREBASE_PROJECT_ID is unset
+        self.db = firestore.Client(project=config.FIREBASE_WEB_CONFIG["projectId"] or None,
+                                   database=config.FIRESTORE_DATABASE)
         self._cache: tuple[float, dict] | None = None
 
     def _ref(self, hospital_id: str, uid: str):

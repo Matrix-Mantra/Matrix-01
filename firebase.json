@@ -1,4 +1,21 @@
 {
+  "auth": {
+    "providers": {
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "Swasthya Saathi",
+        "supportEmail": "rishikeshgautam59@gmail.com",
+        "authorizedRedirectUris": [
+          "https://projects-4e426.firebaseapp.com/__/auth/handler",
+          "http://localhost"
+        ]
+      }
+    }
+  },
+  "firestore": {
+    "database": "default",
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
   "hosting": {
     "public": "firebase-public",
     "ignore": ["firebase.json", "**/.*"],

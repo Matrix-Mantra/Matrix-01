@@ -40,6 +40,8 @@ FIREBASE_WEB_CONFIG = {
 
 # --- Reviews storage: "sqlite" (local file) or "firestore" (Cloud Run)
 STORE = os.getenv("STORE", "sqlite").lower()
+# Firestore database ID. The project's database was created as "default" (not the implicit "(default)").
+FIRESTORE_DATABASE = os.getenv("FIRESTORE_DATABASE", "default")
 SQLITE_PATH = os.getenv("SQLITE_PATH", str(BASE_DIR.parent / "local.db"))
 
 # --- Maps: optional Google Maps Embed API key (free) for a directions map; without it a location map is shown
