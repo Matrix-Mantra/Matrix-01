@@ -59,6 +59,7 @@ def district_office(origin: dict | None, lang: str) -> dict | None:
     if not district:
         return None
     return {
+        "district": district,
         "name": DISTRICT_OFFICE[lang].format(district=district),
         "search_url": map_search_url(f"Veterinary Hospital and Livestock Service Expert Centre {district}", origin),
     }
@@ -77,7 +78,8 @@ def candidates(origin: dict | None, species: str, lang: str, n: int = 4) -> list
         if km <= MAX_KM:
             rows.append({
                 "id": v["id"], "name": v["name"], "name_ne": v.get("name_ne"), "city": v.get("city"),
-                "district": v.get("district"), "type_label": type_label(v.get("type", "private"), lang),
+                "district": v.get("district"), "type": v.get("type", "private"),
+                "type_label": type_label(v.get("type", "private"), lang),
                 "phone": v.get("phone") or "", "verified": bool(v.get("verified")), "distance_km": round(km, 1),
                 "directions_url": hospitals.directions_url(v, origin),
                 "map_embed_url": hospitals.map_embed_url(v, origin),

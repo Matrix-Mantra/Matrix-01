@@ -48,7 +48,7 @@ window.I18N = {
     methodCaveat: "यी अङ्कले अस्पतालबारे सूचीमा भएको जानकारी देखाउँछ, उपचारको गुणस्तर होइन। आँखा, मुटु, क्यान्सर जस्ता विशेषज्ञ अस्पतालको विभाग थोरै हुने भएकाले अङ्क कम आउँछ, तर उपचार कमजोर भन्ने होइन। अस्पतालको विवरण अझै जाँच हुँदैछ। जानुअघि अस्पतालमा पक्का गर्नुहोस्।",
     devEmail: "तपाईंको इमेल", emailNeeded: "कृपया सही इमेल ठेगाना लेख्नुहोस्।", emailLabel: "इमेल", emailPh: "you@example.com", emailSave: "इमेल सुरक्षित गर्नुहोस्",
     emailSaved: "इमेल सुरक्षित भयो", emailWhy: "रिपोर्ट इमेलमा पठाउन यो ठेगाना प्रयोग हुन्छ।", addEmailFirst: "रिपोर्ट पठाउन पहिले इमेल थप्नुहोस्।",
-    emailMe: "इमेलमा पठाउनुहोस्", emailing: "इमेल पठाउँदै…", emailSent: (a) => `${a} मा पठाइयो`, emailOff: "इमेल सेवा अहिले चालु छैन। PDF डाउनलोड गर्नुहोस्।", emailSavedOnly: "इमेल सेवा जोडिएको छैन: इमेल पठाइएन, सर्भरमा परीक्षणका लागि मात्र सुरक्षित भयो।",
+    emailMe: "इमेलमा पठाउनुहोस्", emailing: "इमेल पठाउँदै…", emailSent: (a) => `${a} मा पठाइयो`, emailOff: "इमेल सेवा अहिले चालु छैन। PDF डाउनलोड गर्नुहोस्।", translating: "अनुवाद गर्दै…", preparingAudio: "आवाज तयार गर्दै…", voiceFail: "अहिले रिपोर्ट सुनाउन सकिएन। फेरि प्रयास गर्नुहोस्।", emailSavedOnly: "इमेल सेवा जोडिएको छैन: इमेल पठाइएन, सर्भरमा परीक्षणका लागि मात्र सुरक्षित भयो।",
   },
   en: {
     brand: "Matrix", other: "नेपाली", login: "Log in", logout: "Log out", close: "Close", cancel: "Cancel", save: "Save",
@@ -98,6 +98,6 @@ window.I18N = {
     methodCaveat: "These scores reflect what is listed about each hospital, not the quality of its care. Specialist centres (eye, heart, cancer) have few departments and score lower on purpose, which does not mean worse care. Hospital details are still being verified. Always confirm with the hospital before you go.",
     devEmail: "Your email", emailNeeded: "Please enter a valid email address.", emailLabel: "Email", emailPh: "you@example.com", emailSave: "Save email",
     emailSaved: "Email saved", emailWhy: "We use this address to email you your reports.", addEmailFirst: "Add your email first to receive the report.",
-    emailMe: "Email me", emailing: "Sending the email…", emailSent: (a) => `Sent to ${a}`, emailOff: "Email isn't set up yet. Please download the PDF.", emailSavedOnly: "Email isn't connected: nothing was sent, it was only saved on the server for testing.",
+    emailMe: "Email me", emailing: "Sending the email…", emailSent: (a) => `Sent to ${a}`, emailOff: "Email isn't set up yet. Please download the PDF.", translating: "Translating…", preparingAudio: "Preparing audio…", voiceFail: "Couldn't read the report aloud right now. Please try again.", emailSavedOnly: "Email isn't connected: nothing was sent, it was only saved on the server for testing.",
   },
 };

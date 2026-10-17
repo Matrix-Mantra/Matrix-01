@@ -129,6 +129,7 @@ ul.plain li { margin-bottom: 4px; }
 .progress li.done { color: var(--ink); }
 .progress li.done::before { background: var(--ok); border-color: var(--ok); }
 @keyframes spin { to { transform: rotate(360deg); } }
+.spinner { width: 18px; height: 18px; flex: none; border-radius: 50%; border: 2.5px solid var(--line); border-top-color: var(--ink); animation: spin 0.9s linear infinite; }
 
 .alarm { background: var(--danger); color: #fff; border-radius: var(--r); padding: 14px 16px; margin: 14px 0; display: flex; gap: 12px; align-items: center; justify-content: space-between; }
 .alarm strong { display: block; font-size: 19px; }
@@ -153,7 +154,7 @@ ul.plain li { margin-bottom: 4px; }
 .other { padding: 12px 0; border-top: 1px solid var(--line); }
 .other:first-of-type { border-top: none; }
 .other-head { display: flex; justify-content: space-between; gap: 8px; }
-.listen-row { margin: 0 0 18px; }
+.listen-row { margin: 0 0 18px; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; }
 .listen-row .listen { width: 100%; }
 .sticky-actions { position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); padding: 12px 0 max(12px, env(safe-area-inset-bottom)); display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; margin-top: 16px; }
 .said { font-style: normal; color: var(--ink-2); background: var(--soft); border-radius: var(--r); padding: 12px 14px; margin: 0; }

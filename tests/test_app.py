@@ -5,6 +5,7 @@ import subprocess
 import pytest
 
 from app import ai, config, hospitals, pdf, safety
+from app import report as report_mod
 from tests.conftest import bearer, fake_report_text, fake_triage
 
 
@@ -382,4 +383,65 @@ def test_animal_bite_on_person_stays_human(client, monkeypatch):
     monkeypatch.setattr(ai, "write_report", lambda **kw: fake_report_text([kw["candidates"][0]["id"]]))
     r = client.post("/api/report", json={"text": "कुकुरले छोरालाई टोक्यो", "district": "Kathmandu"}, headers=bearer()).json()
     assert "vet" not in called and r.get("kind") != "animal" and r["department"] == "emergency"
+
+
+# ------------------------------------------------------------------ translation
+
+
+def _fake_translation(texts, lang):
+    tag = lambda v: [f"[{lang}] {x}" for x in v] if isinstance(v, list) else f"[{lang}] {v}"  # noqa: E731
+    return ai.ReportTranslation(**{k: tag(v) for k, v in texts.items()})
+
+
+def test_translate_person_report_rebuilds_facts(client, monkeypatch):
+    rep = _report_for_pdf(client, monkeypatch, lang="en")
+    seen = {}
+
+    def fake(texts, lang):
+        seen.update(texts)
+        return _fake_translation(texts, lang)
+
+    monkeypatch.setattr(ai, "translate_report", fake)
+    r = client.post("/api/report/translate", json={"report": rep, "target": "ne"}, headers=bearer()).json()
+    assert r["lang"] == "ne" and r["title"].startswith("[ne]") and r["do_now"][0].startswith("[ne]")
+    assert r["transcript"] == rep["transcript"]  # what the person said is never translated
+    assert "billing" not in seen and "urgency_text" not in seen  # facts are not sent to the model ...
+    assert r["urgency_text"] == report_mod.URGENCY_TEXT["ne"][rep["urgency"]]  # ... they are rebuilt from data
+    assert r["department_label"] == hospitals.dept_label(rep["department"], "ne")
+    assert r["hospitals"][0]["billing"] == hospitals.billing_info(hospitals.by_id()[rep["hospitals"][0]["id"]], "ne",
+                                                                  emergency=rep["urgency"] == "emergency")
+    assert r["hospitals"][0]["why"].startswith("[ne]")
+
+
+def test_translate_keeps_original_when_lists_do_not_match(client, monkeypatch):
+    rep = _report_for_pdf(client, monkeypatch, lang="en")
+    monkeypatch.setattr(ai, "translate_report", lambda texts, lang: ai.ReportTranslation(title="शीर्षक", do_now=["एउटा"]))
+    r = client.post("/api/report/translate", json={"report": rep, "target": "ne"}, headers=bearer()).json()
+    assert r["title"] == "शीर्षक" and r["do_now"] == rep["do_now"]  # wrong length -> original kept, nothing dropped
+    assert client.post("/api/report/translate", json={"report": rep, "target": "ne"}).status_code == 401
+
+
+# ------------------------------------------------------------------ read aloud
+
+
+def test_report_speech(client, monkeypatch):
+    rep = _report_for_pdf(client, monkeypatch)
+    said = {}
+
+    def fake_speak(text):
+        said["text"] = text
+        return b"ID3fake", "audio/mpeg"
+
+    monkeypatch.setattr(ai, "speak", fake_speak)
+    r = client.post("/api/report/speech", json={**rep, "summary": "बुवालाई छाती दुखेको छ।"}, headers=bearer())
+    assert r.status_code == 200 and r.headers["content-type"] == "audio/mpeg" and r.content == b"ID3fake"
+    # spoken text is built on the server from the report, in the report's language
+    assert said["text"].startswith(rep["urgency_text"]) and "अहिले के गर्ने" in said["text"]
+    assert rep["hospitals"][0]["name_ne"] in said["text"]
+    assert client.post("/api/report/speech", json=rep).status_code == 401
+
+
+def test_raw_pcm_is_wrapped_as_wav():
+    wav = ai._pcm_to_wav(b"\x00\x00" * 2400)
+    assert wav[:4] == b"RIFF" and wav[8:12] == b"WAVE"
 

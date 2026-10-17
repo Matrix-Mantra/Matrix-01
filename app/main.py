@@ -275,6 +275,42 @@ class PdfReport(_Loose):
     hospitals: list[PdfHospital] = Field(max_length=3)
 
 
+class TranslateIn(BaseModel):
+    report: PdfReport
+    target: Literal["ne", "en"]
+
+
+@app.post("/api/report/translate")
+def translate_report(body: TranslateIn, user: User = Depends(current_user)) -> dict:
+    """The same report in Nepali or English (facts are rebuilt from our data, only the model's text is translated)."""
+    check_limit(user, "translate", config.DAILY_REPORT_LIMIT * 2)
+    rep = body.report.model_dump()
+    if rep["kind"] == "person" and rep.get("department") not in hospitals.departments():
+        raise HTTPException(422, "This report cannot be translated.")
+    try:
+        return report.translate(rep, body.target)
+    except Exception as exc:
+        log.exception("translation failed")
+        if ai.is_busy(exc):
+            raise HTTPException(503, "The translation service is busy. Please try again in a minute.") from exc
+        raise HTTPException(502, "Could not translate the report right now. Please try again.") from exc
+
+
+@app.post("/api/report/speech")
+def report_speech(body: PdfReport, user: User = Depends(current_user)) -> Response:
+    """The report read aloud (Gemini voice, MP3). The text is built from the report on the server."""
+    check_limit(user, "speech", config.DAILY_SPEECH_LIMIT)
+    text = report.speech_text(body.model_dump())
+    if not text:
+        raise HTTPException(400, "Nothing to read in this report.")
+    try:
+        audio, mime = ai.speak(text)
+    except Exception as exc:
+        log.exception("speech failed")
+        raise HTTPException(503 if ai.is_busy(exc) else 502, "The voice service is not available right now.") from exc
+    return Response(content=audio, media_type=mime, headers={"Cache-Control": "private, max-age=3600"})
+
+
 @app.post("/api/report/pdf")
 def report_pdf(body: PdfReport, user: User = Depends(current_user)) -> Response:
     check_limit(user, "pdf", 100)

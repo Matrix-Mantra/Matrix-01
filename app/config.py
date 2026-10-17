@@ -20,6 +20,11 @@ FONT_DIR = STATIC_DIR / "fonts"
 SPEECH_MODEL = os.getenv("SPEECH_MODEL", "gemini-3.8-flash")
 TRIAGE_MODEL = os.getenv("TRIAGE_MODEL", "gemini-3.8-flash")
 REPORT_MODEL = os.getenv("REPORT_MODEL", "gemini-3.8-flash")
+# Read-aloud voice (Gemini text-to-speech). Speaks Nepali well; falls back to the second model if busy.
+TTS_MODEL = os.getenv("TTS_MODEL", "gemini-3.8-flash-lite-tts")
+TTS_FALLBACK_MODELS = [m.strip() for m in os.getenv("TTS_FALLBACK_MODELS", "gemini-3.8-flash-tts").split(",") if m.strip()]
+TTS_VOICE = os.getenv("TTS_VOICE", "Kore")
+DAILY_SPEECH_LIMIT = int(os.getenv("DAILY_SPEECH_LIMIT", "40"))
 # Tried in order when a model is busy or unavailable
 FALLBACK_MODELS = [m.strip() for m in os.getenv("FALLBACK_MODELS", "gemini-3.7-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite").split(",")
                    if m.strip()]

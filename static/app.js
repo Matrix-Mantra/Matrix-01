@@ -56,7 +56,8 @@ const S = {
   user: null,            // {name, email}
   getToken: async () => null,
   place: loadPlace(),    // {district} or {lat,lng}
-  report: loadReport(),
+  report: null,          // the report on screen (in S.lang)
+  reports: loadReports(), // {id, ne, en}: the same report in both languages
   flow: { step: "idle", text: "", alarm: null },
 };
 const t = (k, ...a) => { const v = (window.I18N[S.lang] || window.I18N.ne)[k]; return typeof v === "function" ? v(...a) : v; };
@@ -67,7 +68,8 @@ function loadPlace() {
   try { return JSON.parse(store.get("ss_place_gps", true) || "null") || (store.get("ss_district") ? { district: store.get("ss_district") } : null); }
   catch { return null; }
 }
-function loadReport() { try { return JSON.parse(store.get("ss_report", true) || "null"); } catch { return null; } }
+function loadReports() { try { return JSON.parse(store.get("ss_reports", true) || "null"); } catch { return null; } }
+function saveReports(R) { S.reports = R; store.set("ss_reports", R ? JSON.stringify(R) : null, true); }
 function placeParams() {
   if (!S.place) return {};
   return S.place.lat != null ? { lat: S.place.lat, lng: S.place.lng } : { district: S.place.district };
@@ -203,7 +205,7 @@ async function saveEmail() {
 async function logout() {
   if (firebaseAuth) await firebaseAuth.signOut(firebaseAuth.auth);
   store.set("ss_dev_name", null);
-  S.user = null; S.report = null; store.set("ss_report", null, true);
+  S.user = null; S.report = null; saveReports(null);
   $("accountSheet").close(); renderHeader(); route();
 }
 
@@ -530,10 +532,14 @@ async function makeReport(text) {
   const items = () => [...document.querySelectorAll("#progress li")];
   let i = 0;
   const adv = setInterval(() => { const li = items(); if (i < li.length - 1) { li[i].className = "done"; i += 1; li[i].className = "now"; } }, 2500);
+  // Nepali words (spoken Nepali is transcribed in Devanagari) get a Nepali report, even if the app is in English.
+  const lang = /[\u0900-\u097F]/.test(text) ? "ne" : S.lang;
   try {
-    const r = await api("/api/report", { method: "POST", auth: true, body: { text, lang: S.lang, ...placeParams() } });
+    const r = await api("/api/report", { method: "POST", auth: true, body: { text, lang, ...placeParams() } });
+    if (r.lang !== S.lang) { S.lang = r.lang; store.set("ss_lang", S.lang); renderHeader(); }  // headings match the report
     clearInterval(adv);
-    S.report = r; store.set("ss_report", JSON.stringify(r), true);
+    saveReports({ id: r.id, [r.lang]: r });
+    translationFor(r.lang === "ne" ? "en" : "ne").catch(() => {});  // prepare the other language in the background
     S.flow = { step: "idle", text: "" };
     Voice.autoRead = true; // the person spoke, so they get the answer spoken back
     location.hash = "#/report";
@@ -546,11 +552,12 @@ async function makeReport(text) {
   }
 }
 
-// ------------------------------------------------------------------ read aloud (browser speech, no server cost)
+// ------------------------------------------------------------------ read aloud
+// Gemini voice from the server (natural Nepali on every device). If that fails, the browser's own voice is used.
 const SPEECH_OK = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
-const Voice = { playing: false, autoRead: false };
+const Voice = { playing: false, loading: false, autoRead: false, audio: null, run: 0, cache: {} };  // cache: "<id>:<lang>" -> audio URL
 
-// Nepali first; Hindi voices read Devanagari closely enough when no Nepali voice is installed.
+// Browser fallback: Nepali voice first; Hindi voices read Devanagari closely enough when no Nepali voice is installed.
 function pickVoice(lang) {
   const voices = speechSynthesis.getVoices();
   for (const prefix of lang === "ne" ? ["ne", "hi"] : ["en"]) {
@@ -562,23 +569,23 @@ function pickVoice(lang) {
 
 function reportSpeech(r) {
   const top = r.hospitals[0];
+  const steps = r.do_now.map((s, i) => `${i + 1}. ${s}`).join(" ");
   if (r.kind === "animal") {
-    const steps = r.do_now.map((s, i) => `${i + 1}. ${s}`).join(" ");
     return [r.urgency_text, r.summary, `${t("doNow")}: ${steps}`, top ? `${t("goToVet")}: ${hName(top)}` : ""].filter(Boolean).join(" ");
   }
-  const steps = r.do_now.map((s, i) => `${i + 1}. ${s}`).join(" ");
   return [r.urgency_text, r.summary, `${t("doNow")}: ${steps}`, `${t("dept")}: ${r.department_label}`, top ? `${t("goTo")}: ${hName(top)}` : ""]
     .filter(Boolean).join(" ");
 }
 
 function stopSpeaking() {
+  Voice.run += 1;  // cancels audio that is still being prepared
+  if (Voice.audio) { Voice.audio.pause(); Voice.audio = null; }
   if (SPEECH_OK) speechSynthesis.cancel();
-  Voice.playing = false;
+  Voice.playing = false; Voice.loading = false;
 }
 
-function speak(text, lang) {
-  if (!SPEECH_OK || !text) return;
-  stopSpeaking();
+function browserSpeak(text, lang) {
+  if (!SPEECH_OK || !text) return false;
   const voice = pickVoice(lang);
   const u = new SpeechSynthesisUtterance(text);
   u.lang = voice ? voice.lang : (lang === "ne" ? "ne-NP" : "en-US");
@@ -587,25 +594,73 @@ function speak(text, lang) {
   u.onend = u.onerror = () => { Voice.playing = false; syncListen(); };
   Voice.playing = true;
   speechSynthesis.speak(u);
+  return true;
 }
 
 function listenButton() {
-  return el("button", { class: "secondary-btn listen", id: "listenBtn", type: "button", onclick: toggleListen });
+  const b = el("button", { class: "secondary-btn listen", id: "listenBtn", type: "button", onclick: toggleListen });
+  paintListen(b);
+  return b;
 }
 
-function syncListen() {
-  const b = $("listenBtn");
-  if (!b) return;
-  b.replaceChildren(svg(Voice.playing ? ICON.stop : ICON.speaker), Voice.playing ? t("stopSpeaking") : t("listen"));
+function paintListen(b) {
+  if (Voice.loading) b.replaceChildren(el("span", { class: "spinner", "aria-hidden": "true" }), t("preparingAudio"));
+  else b.replaceChildren(svg(Voice.playing ? ICON.stop : ICON.speaker), Voice.playing ? t("stopSpeaking") : t("listen"));
 }
 
-function toggleListen() {
-  if (Voice.playing) stopSpeaking();
-  else if (S.report) speak(reportSpeech(S.report), S.report.lang || S.lang);
-  syncListen();
+function syncListen() { const b = $("listenBtn"); if (b) paintListen(b); }
+
+async function toggleListen() {
+  if (Voice.playing || Voice.loading) { stopSpeaking(); syncListen(); return; }
+  const r = S.report;
+  if (!r) return;
+  const run = ++Voice.run;
+  const key = `${r.id}:${r.lang}`;
+  Voice.loading = true; syncListen();
+  let url = Voice.cache[key];
+  try {
+    if (!url) {
+      const res = await api("/api/report/speech", { method: "POST", auth: true, body: r, raw: true });
+      url = Voice.cache[key] = URL.createObjectURL(await res.blob());
+    }
+  } catch {
+    if (run !== Voice.run) return;
+    Voice.loading = false;
+    if (!browserSpeak(reportSpeech(r), r.lang)) toast(t("voiceFail"));
+    syncListen();
+    return;
+  }
+  if (run !== Voice.run) return;  // stopped, or the page changed, while the audio was being prepared
+  const audio = new Audio(url);
+  Voice.audio = audio; Voice.loading = false; Voice.playing = true; syncListen();
+  audio.onended = audio.onerror = () => { if (Voice.audio === audio) { Voice.audio = null; Voice.playing = false; syncListen(); } };
+  try { await audio.play(); }
+  catch { if (Voice.audio === audio) { Voice.audio = null; Voice.playing = false; syncListen(); } }  // autoplay blocked: tap Listen
 }
 
 // ------------------------------------------------------------------ report
+// ------------------------------------------------------------------ report in both languages
+// Every report is translated to the other language right after it is made; the header's language button
+// shows the report in the chosen language.
+const pendingTranslation = {};
+
+function translationFor(lang) {
+  const R = S.reports;
+  if (!R) return Promise.reject(new Error(t("netError")));
+  if (R[lang]) return Promise.resolve(R[lang]);
+  const key = `${R.id}:${lang}`;
+  if (!pendingTranslation[key]) {
+    pendingTranslation[key] = api("/api/report/translate", { method: "POST", auth: true, body: { report: R.ne || R.en, target: lang } })
+      .then((tr) => { if (S.reports && S.reports.id === R.id) saveReports({ ...S.reports, [lang]: tr }); return tr; })
+      .finally(() => { delete pendingTranslation[key]; });
+  }
+  return pendingTranslation[key];
+}
+
+function reportTools() {
+  return el("div", { class: "listen-row" }, listenButton());
+}
+
 function reportActions() {
   return [el("div", { class: "sticky-actions" },
     el("button", { class: "primary-btn", type: "button", onclick: downloadPdf }, svg(ICON.down), " ", t("downloadPdf")),
@@ -621,7 +676,7 @@ function viewAnimalReport(r) {
     el("h1", { class: "r-title", text: r.title }),
     el("div", { class: `r-urgency u-${r.urgency}` }, el("b", { text: r.urgency_text }), r.urgency_reason),
     el("p", { text: r.summary }),
-    SPEECH_OK ? el("div", { class: "listen-row" }, listenButton()) : null,
+    reportTools(),
     block(t("doNow"), stepsList(r.do_now)),
     el("section", { class: "block" }, el("h2", { text: t("goToVet") }),
       top ? el("div", { class: "pick" },
@@ -653,9 +708,27 @@ function viewAnimalReport(r) {
 }
 
 function viewReport() {
-  const r = S.report;
-  if (!r) { location.hash = "#/help"; return; }
+  const R = S.reports;
+  if (!R || !(R.ne || R.en)) { location.hash = "#/help"; return; }
+  const r = R[S.lang];
+  if (!r) {  // translation still on its way
+    fill($("view"), [el("a", { class: "back", href: "#/" }, svg(ICON.back), t("back")),
+      el("ul", { class: "progress" }, el("li", { class: "now", text: t("translating") }))]);
+    translationFor(S.lang)
+      .then(() => { if ((location.hash || "").startsWith("#/report")) viewReport(); })
+      .catch((e) => {  // show the original language rather than nothing
+        toast(e.message);
+        const orig = R.ne || R.en;
+        S.lang = orig.lang; store.set("ss_lang", S.lang); renderHeader(); viewReport();
+      });
+    return;
+  }
+  S.report = r;
   if (r.kind === "animal") { viewAnimalReport(r); return; }
+  viewPersonReport(r);
+}
+
+function viewPersonReport(r) {
   const top = r.hospitals[0];
   const v = $("view");
   const parts = [
@@ -664,7 +737,7 @@ function viewReport() {
     el("h1", { class: "r-title", text: r.title }),
     el("div", { class: `r-urgency u-${r.urgency}` }, el("b", { text: r.urgency_text }), r.urgency_reason),
     el("p", { text: r.summary }),
-    SPEECH_OK ? el("div", { class: "listen-row" }, listenButton()) : null,
+    reportTools(),
     block(t("doNow"), stepsList(r.do_now)),
     el("section", { class: "block" }, el("h2", { text: t("dept") }),
       el("div", { class: "dept-box" }, el("b", { text: r.department_label }), el("p", { text: r.department_reason || r.department_about }))),

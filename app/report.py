@@ -129,7 +129,8 @@ def build_report(*, text: str, lang: str, lat: float | None = None, lng: float |
         "department_about": dept_info[f"about_{lang}"],
         "alternative_department": hospitals.normalize_department(tri.alternative_department) if not is_emergency else None,
         "origin": origin,
-        "safety_flags": [{"label": f[f"label_{lang}"], "action": f[f"action_{lang}"]} for f in check["flags"]],
+        "safety_flags": [{"id": f["id"], "label": f[f"label_{lang}"], "action": f[f"action_{lang}"]}
+                         for f in check["flags"]],
         "title": text_out.title,
         "summary": text_out.summary,
         "urgency_reason": text_out.urgency_reason,
@@ -198,7 +199,8 @@ def build_vet_report(*, text: str, tri: ai.Triage, human_check: dict, lang: str,
         "urgency": urgency,
         "urgency_text": VET_URGENCY_TEXT[lang][urgency],
         "origin": origin,
-        "safety_flags": [{"label": f[f"label_{lang}"], "action": f[f"action_{lang}"]} for f in check["flags"]],
+        "safety_flags": [{"id": f["id"], "label": f[f"label_{lang}"], "action": f[f"action_{lang}"]}
+                         for f in check["flags"]],
         "title": out.title,
         "summary": out.summary,
         "urgency_reason": out.urgency_reason,
@@ -214,4 +216,111 @@ def build_vet_report(*, text: str, tri: ai.Triage, human_check: dict, lang: str,
         "disclaimer": VET_DISCLAIMER[lang],
         "seconds": round(time.time() - t0, 1),
     }
+
+
+
+# ------------------------------------------------------------------ translation (Nepali ⇄ English)
+
+MODEL_TEXT_FIELDS = ("title", "summary", "urgency_reason", "do_now", "department_reason", "what_to_bring",
+                     "questions_for_doctor", "warning_signs", "travel_tip", "care_at_home", "food_tips", "tell_the_vet")
+
+
+def _flag_in(flag: dict, lang: str) -> dict:
+    for rule in safety.RULES + safety.ANIMAL_RULES:
+        if rule.id == flag.get("id"):
+            return {"id": rule.id, "label": getattr(rule, f"label_{lang}"), "action": getattr(rule, f"action_{lang}")}
+    return flag
+
+
+def translate(report: dict, lang: str) -> dict:
+    """The same report in another language.
+
+    Only the text the model wrote is translated (by the model). Everything that comes from our data (urgency,
+    department, billing and inside-the-hospital steps, safety messages, schemes, disclaimer) is rebuilt from the
+    data in the new language. If a translated list comes back with a different length, the original is kept,
+    so no advice is ever dropped. What the person said (the transcript) is never translated.
+    """
+    if report.get("lang") == lang:
+        return report
+    animal = report.get("kind") == "animal"
+    hs = report.get("hospitals") or []
+    texts = {k: report[k] for k in MODEL_TEXT_FIELDS if report.get(k)}
+    texts["hospital_whys"] = [h.get("why") or "" for h in hs]
+    tr = ai.translate_report(texts, lang)
+
+    out = {**report, "lang": lang}
+    for k in MODEL_TEXT_FIELDS:
+        if k not in texts:
+            continue
+        new = getattr(tr, k)
+        ok = len(new) == len(texts[k]) and all(new) if isinstance(texts[k], list) else bool(new)
+        if ok:
+            out[k] = new
+    whys = tr.hospital_whys if len(tr.hospital_whys) == len(hs) else texts["hospital_whys"]
+
+    out["urgency_text"] = (VET_URGENCY_TEXT if animal else URGENCY_TEXT)[lang][report["urgency"]]
+    out["disclaimer"] = (VET_DISCLAIMER if animal else DISCLAIMER)[lang]
+    out["safety_flags"] = [_flag_in(f, lang) for f in report.get("safety_flags") or []]
+
+    if animal:
+        en, ne = ANIMAL_LABELS.get(report.get("animal"), (report.get("animal_label"),) * 2)
+        out["animal_label"] = ne if lang == "ne" else en
+        known = {v["id"] for v in vets.all_vets()}
+        out["hospitals"] = [{**h, "why": why, "type_label": vets.type_label(h.get("type", "private"), lang)}
+                            for h, why in zip(hs, whys) if h.get("id") in known]
+        office = report.get("district_office")
+        if office and office.get("district"):
+            out["district_office"] = {**office, "name": vets.DISTRICT_OFFICE[lang].format(district=office["district"])}
+        return out
+
+    dept = report["department"]
+    out["department_label"] = hospitals.dept_label(dept, lang)
+    out["department_about"] = hospitals.departments()[dept][f"about_{lang}"]
+    emergency = report["urgency"] == "emergency"
+    chosen = []
+    for h, why in zip(hs, whys):
+        raw = hospitals.by_id().get(h.get("id"))
+        if not raw:
+            continue
+        dept_here = dept if dept in raw.get("departments", []) else "general_medicine"
+        chosen.append({**h, "why": why, "type_label": hospitals.type_label(raw.get("type", "unknown"), lang),
+                       "billing": hospitals.billing_info(raw, lang, emergency=emergency),
+                       "inside": hospitals.inside_steps(raw, dept_here, lang)})
+    out["hospitals"] = chosen
+    by_id = {s["id"]: s for s in hospitals.schemes()}
+    out["schemes"] = [{"id": s["id"], "name": by_id[s["id"]][f"name_{lang}"], "summary": by_id[s["id"]][f"summary_{lang}"],
+                       "how": by_id[s["id"]][f"how_to_use_{lang}"]} for s in report.get("schemes") or [] if s.get("id") in by_id]
+    return out
+
+
+# ------------------------------------------------------------------ read aloud
+
+SPEECH_LABELS = {
+    "en": {"do_now": "What to do now", "dept": "Department to visit", "go_to": "Where to go",
+           "go_to_vet": "Where to take your animal", "office": "Or the district government vet office"},
+    "ne": {"do_now": "अहिले के गर्ने", "dept": "जाने विभाग", "go_to": "कहाँ जाने",
+           "go_to_vet": "जनावरलाई कहाँ लैजाने", "office": "वा जिल्लाको सरकारी पशु सेवा कार्यालय"},
+}
+MAX_SPEECH_CHARS = 2500
+
+
+def speech_text(report: dict) -> str:
+    """What the read-aloud button says: the essentials, in the report's language (built here, never sent by the browser)."""
+    lang = report.get("lang", "ne")
+    lb = SPEECH_LABELS[lang]
+    name = lambda h: (h.get("name_ne") if lang == "ne" else None) or h.get("name", "")  # noqa: E731
+    steps = " ".join(f"{i}. {s}" for i, s in enumerate(report.get("do_now") or [], 1))
+    parts = [report.get("urgency_text", ""), report.get("summary", ""), f"{lb['do_now']}: {steps}" if steps else ""]
+    top = (report.get("hospitals") or [None])[0]
+    if report.get("kind") == "animal":
+        if top:
+            parts.append(f"{lb['go_to_vet']}: {name(top)}.")
+        elif report.get("district_office"):
+            parts.append(f"{lb['office']}: {report['district_office'].get('name', '')}.")
+    else:
+        if report.get("department_label"):
+            parts.append(f"{lb['dept']}: {report['department_label']}.")
+        if top:
+            parts.append(f"{lb['go_to']}: {name(top)}.")
+    return " ".join(p.strip() for p in parts if p and p.strip())[:MAX_SPEECH_CHARS]
 
