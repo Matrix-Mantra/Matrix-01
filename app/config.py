@@ -20,6 +20,11 @@ FONT_DIR = STATIC_DIR / "fonts"
 SPEECH_MODEL = os.getenv("SPEECH_MODEL", "gemini-3.8-flash")
 TRIAGE_MODEL = os.getenv("TRIAGE_MODEL", "gemini-3.8-flash")
 REPORT_MODEL = os.getenv("REPORT_MODEL", "gemini-3.8-flash")
+# Read-aloud voice (Gemini text-to-speech). Speaks Nepali well; falls back to the second model if busy.
+TTS_MODEL = os.getenv("TTS_MODEL", "gemini-3.8-flash-lite-tts")
+TTS_FALLBACK_MODELS = [m.strip() for m in os.getenv("TTS_FALLBACK_MODELS", "gemini-3.8-flash-tts").split(",") if m.strip()]
+TTS_VOICE = os.getenv("TTS_VOICE", "Kore")
+DAILY_SPEECH_LIMIT = int(os.getenv("DAILY_SPEECH_LIMIT", "40"))
 # Tried in order when a model is busy or unavailable
 FALLBACK_MODELS = [m.strip() for m in os.getenv("FALLBACK_MODELS", "gemini-3.7-flash,gemini-3.5-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite").split(",")
                    if m.strip()]
@@ -39,6 +44,17 @@ SQLITE_PATH = os.getenv("SQLITE_PATH", str(BASE_DIR.parent / "local.db"))
 
 # --- Maps: optional Google Maps Embed API key (free) for a directions map; without it a location map is shown
 MAPS_EMBED_API_KEY = os.getenv("MAPS_EMBED_API_KEY", "")
+
+# --- Email (report by email). Any SMTP server works, e.g. Gmail with an App Password:
+# SMTP_HOST=smtp.gmail.com SMTP_PORT=587 SMTP_USER=you@gmail.com SMTP_PASSWORD=<app password> MAIL_FROM=you@gmail.com
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+MAIL_FROM = os.getenv("MAIL_FROM", "") or SMTP_USER
+# Without SMTP, set MAIL_OUTBOX to a folder to save emails there as .eml files instead (local testing)
+MAIL_OUTBOX = os.getenv("MAIL_OUTBOX", "")
+DAILY_EMAIL_LIMIT = int(os.getenv("DAILY_EMAIL_LIMIT", "10"))
 
 # --- Limits
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024

@@ -39,6 +39,9 @@ ENV_VARS+=",AUTH_MODE=firebase,STORE=firestore"
 ENV_VARS+=",FIREBASE_API_KEY=${FIREBASE_API_KEY},FIREBASE_AUTH_DOMAIN=${FIREBASE_AUTH_DOMAIN}"
 ENV_VARS+=",FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID:-$PROJECT_ID},FIREBASE_APP_ID=${FIREBASE_APP_ID}"
 ENV_VARS+=",MAPS_EMBED_API_KEY=${MAPS_EMBED_API_KEY:-}"
+# Optional: report by email (see .env.example). Without SMTP_HOST the "Email me" button explains it is off.
+ENV_VARS+=",SMTP_HOST=${SMTP_HOST:-},SMTP_PORT=${SMTP_PORT:-587},SMTP_USER=${SMTP_USER:-},MAIL_FROM=${MAIL_FROM:-}"
+ENV_VARS+=",SMTP_PASSWORD=${SMTP_PASSWORD:-}"
 
 echo "Building and deploying (takes a few minutes)..."
 gcloud run deploy "$SERVICE" \

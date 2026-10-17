@@ -40,8 +40,9 @@ def client() -> genai.Client:
 _RETRY_CODES = {404, 429, 500, 503}
 
 
-def _generate(model: str, **kwargs):
-    models = [model] + [m for m in config.FALLBACK_MODELS if m != model]
+def _generate(model: str, fallbacks: list[str] | None = None, **kwargs):
+    fallbacks = config.FALLBACK_MODELS if fallbacks is None else fallbacks
+    models = [model] + [m for m in fallbacks if m != model]
     attempts = [(r, m) for r in range(2) for m in models]  # two rounds: demand spikes are usually short
     for i, (round_no, name) in enumerate(attempts):
         if round_no and name == models[0]:
@@ -120,11 +121,62 @@ def transcribe(data: bytes, mime_type: str) -> str:
     return (resp.text or "").strip()
 
 
+# ------------------------------------------------------------------ read aloud (text → speech)
+
+
+def _pcm_to_wav(pcm: bytes, rate: int = 24000) -> bytes:
+    import io
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(pcm)
+    return buf.getvalue()
+
+
+def _to_mp3(wav: bytes) -> tuple[bytes, str]:
+    """Smaller download for phones; WAV if ffmpeg is missing or fails."""
+    try:
+        ffmpeg = _ffmpeg_path()
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dst = Path(tmp) / "in.wav", Path(tmp) / "out.mp3"
+            src.write_bytes(wav)
+            subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-i", str(src), "-ac", "1", "-b:a", "64k", str(dst)],
+                           check=True, timeout=60)
+            return dst.read_bytes(), "audio/mpeg"
+    except Exception:  # noqa: BLE001
+        log.warning("mp3 conversion failed, sending wav")
+        return wav, "audio/wav"
+
+
+def speak(text: str) -> tuple[bytes, str]:
+    """Natural speech for `text` (Nepali or English). Only the text is sent: any instruction would be read aloud."""
+    resp = _generate(
+        config.TTS_MODEL, config.TTS_FALLBACK_MODELS, contents=text,
+        config=types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=config.TTS_VOICE)))),
+    )
+    part = resp.candidates[0].content.parts[0].inline_data
+    data = part.data if part.data[:4] == b"RIFF" else _pcm_to_wav(part.data)  # some models send raw 24 kHz PCM
+    return _to_mp3(data)
+
+
 # ------------------------------------------------------------------ step 1: triage
 
 
 class Triage(BaseModel):
-    is_health_problem: bool = Field(description="False if the text does not describe a health problem or need.")
+    is_health_problem: bool = Field(description="False if the text does not describe a health problem or need "
+                                                "(of a person or of an animal).")
+    subject: Literal["person", "animal"] = Field(description="'animal' if the problem is about a pet or farm animal; "
+                                                             "'person' if about a human, including a person bitten "
+                                                             "or scratched by an animal.")
+    animal: str = Field(description="If subject is animal: the kind of animal in English, e.g. 'rabbit', 'cow'. "
+                                    "Otherwise empty.")
     patient: str = Field(description="Who is sick and their age if mentioned, e.g. 'father, 62'. Empty if unknown.")
     key_symptoms: list[str] = Field(description="Main symptoms in short words, in the transcript's language.")
     duration: str = Field(description="How long it has been happening, if mentioned. Empty if unknown.")
@@ -139,6 +191,12 @@ TRIAGE_PROMPT = """\
 You help people in Nepal find the right hospital department. You are NOT a doctor and must not diagnose.
 Read what the person said (it may be Nepali, romanized Nepali or English, and may contain speech-recognition
 mistakes) and fill in the fields.
+
+People also ask about their animals (pets like rabbits, dogs, cats, birds; farm animals like cows, buffaloes,
+goats, chickens). Then set subject="animal", name the animal, and judge urgency FOR THE ANIMAL with the same
+levels. A rabbit or guinea pig that has stopped eating is at least "urgent". If an animal bit or scratched a
+PERSON, the subject is "person" (rabies risk: urgency at least "urgent", department "emergency" or
+"general_medicine"). For animals, set department to "general_medicine" (it is not used).
 
 Urgency rules:
 - emergency: danger signs now (chest pain, severe breathing trouble, unconscious, fits, stroke signs, heavy
@@ -199,6 +257,97 @@ Department to visit: {department} ({department_label})
 Person's location: {origin}
 Candidate hospitals (JSON): {candidates}
 Nearest general hospital (JSON, may be null): {nearest_general}"""
+
+
+class VetPick(BaseModel):
+    vet_id: str = Field(description="Must be one of the candidate vet ids.")
+    why: str = Field(description="One short sentence: why this place (distance, type).")
+
+
+class VetReportText(BaseModel):
+    title: str = Field(description="Short title, e.g. 'Rabbit not eating: see a vet today'.")
+    summary: str = Field(description="2-3 simple sentences: what the person told us and what we suggest.")
+    urgency_reason: str = Field(description="One sentence on why this level of urgency for the animal.")
+    do_now: list[str] = Field(description="2-4 short, practical steps to take now, most important first.")
+    care_at_home: list[str] = Field(description="2-5 safe general comfort steps until the vet visit (warmth, quiet, "
+                                                "water). No medicines.")
+    food_tips: list[str] = Field(description="2-4 tips on what this animal normally eats and what to offer now. "
+                                             "Empty if feeding is not relevant.")
+    picks: list[VetPick] = Field(description="0-3 vets from the candidates, best first. Empty if there are none.")
+    tell_the_vet: list[str] = Field(description="2-4 things to tell or ask the vet (when it started, what it ate...).")
+    warning_signs: list[str] = Field(description="2-4 signs that mean go to a vet immediately.")
+    travel_tip: str = Field(description="One practical tip about taking the animal there. Empty if nothing useful.")
+
+
+VET_PROMPT = """\
+You write a short, clear guide for a person in Nepal whose animal is unwell. They may have little education.
+Write ALL text in {language}. Use simple everyday words and short sentences.
+
+STRICT RULES
+- You are not a vet. Do not diagnose or name a disease. You may say what kind of problem it could be in plain,
+  general words only if it helps the person act (e.g. "its stomach may have stopped working"), never as a certainty.
+- Never suggest any medicine or dose, and tell the person NOT to give human medicines (many are poisonous to animals).
+- Choose vets ONLY from the candidate list, by id. Do not invent clinics, phone numbers, prices or opening hours.
+  If the candidate list is empty, leave picks empty: the app adds the district government vet office and a map
+  search for vets nearby.
+- If urgency is emergency, the first do_now step must be to take the animal to a vet right now.
+- Food tips must be standard, safe feeding for this kind of animal (e.g. rabbits: plenty of hay, fresh greens,
+  water; no bread, sweets or cooked food).
+
+What the person said: \"\"\"{text}\"\"\"
+Animal: {animal}
+Urgency for the animal: {urgency}
+Danger signs found by our rules (JSON): {flags}
+Person's location: {origin}
+District government vet office: {office}
+Candidate vets (JSON, may be empty): {candidates}"""
+
+
+def write_vet_report(*, text: str, animal: str, urgency: str, flags: list[dict], origin_label: str,
+                     office: str, candidates: list[dict], lang: str) -> VetReportText:
+    slim = [{k: c.get(k) for k in ("id", "name", "type_label", "city", "district", "distance_km")} for c in candidates]
+    prompt = VET_PROMPT.format(
+        language="simple Nepali (Devanagari script)" if lang == "ne" else "simple English", text=text,
+        animal=animal or "unknown", urgency=urgency, flags=json.dumps([f["label_en"] for f in flags]),
+        origin=origin_label or "unknown", office=office or "unknown",
+        candidates=json.dumps(slim, ensure_ascii=False),
+    )
+    return _json_call(config.REPORT_MODEL, [prompt], VetReportText, temperature=0.3)
+
+
+class ReportTranslation(BaseModel):
+    """The parts of a report the model wrote. Facts from our data are rebuilt in the new language instead."""
+    title: str = ""
+    summary: str = ""
+    urgency_reason: str = ""
+    do_now: list[str] = Field(default_factory=list)
+    department_reason: str = ""
+    what_to_bring: list[str] = Field(default_factory=list)
+    questions_for_doctor: list[str] = Field(default_factory=list)
+    warning_signs: list[str] = Field(default_factory=list)
+    travel_tip: str = ""
+    care_at_home: list[str] = Field(default_factory=list)
+    food_tips: list[str] = Field(default_factory=list)
+    tell_the_vet: list[str] = Field(default_factory=list)
+    hospital_whys: list[str] = Field(default_factory=list, description="One per hospital, same order.")
+
+
+TRANSLATE_PROMPT = """\
+Translate every text value in this JSON into {language}. It is a hospital or vet visit guide for a person in
+Nepal who may have little education: use simple everyday words and short sentences.
+Keep exactly the same keys, the same number of items in every list, and the same order. Keep numbers, names
+of hospitals and places, and phone numbers as they are. Do not add, remove or change any advice.
+Empty values stay empty.
+
+JSON:
+{payload}"""
+
+
+def translate_report(texts: dict, lang: str) -> ReportTranslation:
+    prompt = TRANSLATE_PROMPT.format(
+        language="simple Nepali (Devanagari script)" if lang == "ne" else "simple English",
+        payload=json.dumps(texts, ensure_ascii=False))
+    return _json_call(config.REPORT_MODEL, [prompt], ReportTranslation, temperature=0.1)
 
 
 def write_report(*, text: str, triage_result: Triage, department: str, department_label: str, origin_label: str,

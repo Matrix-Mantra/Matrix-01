@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import ai, config, hospitals, pdf, report, safety
+from . import ai, config, hospitals, mailer, pdf, ranking, report, safety, vets
 from .auth import User, check_limit, current_user
 from .store import get_store
 
@@ -53,13 +53,68 @@ def app_config() -> dict:
         "firebase": config.FIREBASE_WEB_CONFIG if config.AUTH_MODE == "firebase" else None,
         "districts": sorted(dmap),
         "departments": hospitals.departments(),
-        "osm_attribution": any(h.get("source") == "osm" for h in hospitals.all_hospitals()),
+        "osm_attribution": any(h.get("source") == "osm" for h in hospitals.all_hospitals() + vets.all_vets()),
+        "email_enabled": mailer.configured(),
     }
+
+
+# ------------------------------------------------------------------ accounts
+
+
+class LoginIn(BaseModel):
+    email: str = Field(default="", max_length=254)
+
+
+class EmailIn(BaseModel):
+    email: str = Field(max_length=254)
+
+
+def _clean_email(email: str) -> str:
+    email = email.strip()
+    if email and not mailer.valid_email(email):
+        raise HTTPException(422, "Please enter a valid email address.")
+    return email
+
+
+def _profile(u: dict | None, user: User) -> dict:
+    return {"uid": user.uid, "name": user.name, "email": (u or {}).get("email") or user.email}
+
+
+@app.post("/api/login")
+def login(body: LoginIn, user: User = Depends(current_user)) -> dict:
+    """Called by the browser after each sign-in: saves the account (and its email) in the database."""
+    email = user.email or _clean_email(body.email)
+    return _profile(get_store().record_login(user.uid, user.name, email), user)
 
 
 @app.get("/api/me")
 def me(user: User = Depends(current_user)) -> dict:
-    return {"uid": user.uid, "name": user.name}
+    return _profile(get_store().get_user(user.uid), user)
+
+
+@app.put("/api/me")
+def update_me(body: EmailIn, user: User = Depends(current_user)) -> dict:
+    email = _clean_email(body.email)
+    if not email:
+        raise HTTPException(422, "Please enter a valid email address.")
+    store = get_store()
+    u = store.set_email(user.uid, email) or store.record_login(user.uid, user.name, email)
+    return _profile(u, user)
+
+
+# ------------------------------------------------------------------ ranking (public)
+
+
+@app.get("/api/ranking")
+def hospital_ranking(lang: Literal["ne", "en"] = "ne") -> dict:
+    rows = ranking.build(get_store().summaries(), lang)
+    return {
+        "indicators": [{"key": k, "weight": w} for k, w in ranking.INDICATORS],
+        "min_reviews": ranking.MIN_REVIEWS,
+        "stats": {"hospitals": len(rows), "provinces": len({r["province"] for r in rows if r["province"]}),
+                  "emergency_24h": sum(r["emergency_24h"] for r in rows), "verified": sum(r["verified"] for r in rows)},
+        "hospitals": rows,
+    }
 
 
 # ------------------------------------------------------------------ hospitals and reviews (public read)
@@ -162,7 +217,7 @@ async def transcribe(audio: UploadFile = File(...), user: User = Depends(current
         if ai.is_busy(exc):
             raise HTTPException(503, "The voice service is busy right now. Please try again in a minute, or type instead.") from exc
         raise HTTPException(502, "Could not understand the recording. Please try again or type instead.") from exc
-    return {"text": text, "safety": safety.check_text(text)}
+    return {"text": text, "safety": safety.banner_check(text)}
 
 
 class ReportRequest(BaseModel):
@@ -176,7 +231,7 @@ class ReportRequest(BaseModel):
 @app.post("/api/report")
 def make_report(req: ReportRequest, user: User = Depends(current_user)):
     check_limit(user, "report", config.DAILY_REPORT_LIMIT)
-    check = safety.check_text(req.text)
+    check = safety.banner_check(req.text)
     try:
         return report.build_report(text=req.text, lang=req.lang, lat=req.lat, lng=req.lng, district=req.district)
     except report.NotHealthRelated:
@@ -203,13 +258,57 @@ class PdfHospital(_Loose):
     directions_url: str = Field(max_length=500, pattern=r"^https://www\.google\.com/maps/")
 
 
+class PdfOffice(_Loose):
+    name: str = Field(max_length=200)
+    search_url: str = Field(max_length=500, pattern=r"^https://www\.google\.com/maps/")
+
+
 class PdfReport(_Loose):
+    kind: Literal["person", "animal"] = "person"
+    vet_search_url: str | None = Field(default=None, max_length=500, pattern=r"^https://www\.google\.com/maps/")
+    district_office: PdfOffice | None = None
     lang: Literal["ne", "en"]
     urgency: Literal["emergency", "urgent", "soon", "routine"]
     title: str = Field(max_length=300)
     summary: str = Field(max_length=2000)
     transcript: str = Field(max_length=config.MAX_TRANSCRIPT_CHARS)
     hospitals: list[PdfHospital] = Field(max_length=3)
+
+
+class TranslateIn(BaseModel):
+    report: PdfReport
+    target: Literal["ne", "en"]
+
+
+@app.post("/api/report/translate")
+def translate_report(body: TranslateIn, user: User = Depends(current_user)) -> dict:
+    """The same report in Nepali or English (facts are rebuilt from our data, only the model's text is translated)."""
+    check_limit(user, "translate", config.DAILY_REPORT_LIMIT * 2)
+    rep = body.report.model_dump()
+    if rep["kind"] == "person" and rep.get("department") not in hospitals.departments():
+        raise HTTPException(422, "This report cannot be translated.")
+    try:
+        return report.translate(rep, body.target)
+    except Exception as exc:
+        log.exception("translation failed")
+        if ai.is_busy(exc):
+            raise HTTPException(503, "The translation service is busy. Please try again in a minute.") from exc
+        raise HTTPException(502, "Could not translate the report right now. Please try again.") from exc
+
+
+@app.post("/api/report/speech")
+def report_speech(body: PdfReport, user: User = Depends(current_user)) -> Response:
+    """The report read aloud (Gemini voice, MP3). The text is built from the report on the server."""
+    check_limit(user, "speech", config.DAILY_SPEECH_LIMIT)
+    text = report.speech_text(body.model_dump())
+    if not text:
+        raise HTTPException(400, "Nothing to read in this report.")
+    try:
+        audio, mime = ai.speak(text)
+    except Exception as exc:
+        log.exception("speech failed")
+        raise HTTPException(503 if ai.is_busy(exc) else 502, "The voice service is not available right now.") from exc
+    return Response(content=audio, media_type=mime, headers={"Cache-Control": "private, max-age=3600"})
 
 
 @app.post("/api/report/pdf")
@@ -222,3 +321,26 @@ def report_pdf(body: PdfReport, user: User = Depends(current_user)) -> Response:
         raise HTTPException(400, "Could not create the PDF from this report.") from exc
     return Response(content=data, media_type="application/pdf",
                     headers={"Content-Disposition": 'attachment; filename="hospital-guide.pdf"'})
+
+
+@app.post("/api/report/email")
+def report_email(body: PdfReport, user: User = Depends(current_user)) -> dict:
+    """Email the report PDF to the address saved on the user's account."""
+    if not mailer.configured():
+        raise HTTPException(503, "Email is not set up on this server yet. Please download the PDF instead.")
+    to = _profile(get_store().get_user(user.uid), user)["email"]
+    if not to:
+        raise HTTPException(400, "Please add your email address first.")
+    check_limit(user, "email", config.DAILY_EMAIL_LIMIT)
+    rep = body.model_dump()
+    try:
+        data = pdf.render_pdf(rep)
+    except Exception as exc:
+        log.exception("pdf failed")
+        raise HTTPException(400, "Could not create the PDF from this report.") from exc
+    try:
+        delivered = mailer.send(mailer.build_message(to, user.name, rep, data))
+    except Exception as exc:
+        log.exception("email failed")
+        raise HTTPException(502, "Could not send the email right now. Please download the PDF instead.") from exc
+    return {"sent_to": to, "delivered": delivered}

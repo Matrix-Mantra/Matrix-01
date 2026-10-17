@@ -205,3 +205,131 @@ def check_text(text: str) -> dict:
                 }
             )
     return {"is_emergency": bool(hits), "flags": hits}
+
+
+# ------------------------------------------------------------------ animals
+#
+# Questions about pets and livestock go to vets, not hospitals. Two things must never go wrong:
+#  - an animal bite or scratch on a PERSON stays a human case (rabies), so ANIMAL_BITE keeps the human flow;
+#  - danger signs in an animal force "see a vet now", even if the model says it can wait.
+
+ANIMAL_WORDS: dict[str, tuple[str, ...]] = {
+    "rabbit": ("rabbit", "bunny", "खरायो", "kharayo"),
+    "dog": ("dog", "puppy", "कुकुर", "kukur"),
+    "cat": ("cat", "kitten", "बिरालो", "biralo"),
+    "cow": ("cow", "calf", "cattle", "गाई", "बाछो", "बाछी", "gai"),
+    "buffalo": ("buffalo", "भैंसी", "भैंसी", "राँगो", "पाडो", "bhainsi"),
+    "goat": ("goat", "बाख्रा", "पाठा", "पाठी", "khasi", "बोका", "खसी", "bakhra"),
+    "sheep": ("sheep", "भेडा", "bheda"),
+    "pig": ("pig", "सुँगुर", "बंगुर", "sungur", "bangur"),
+    "chicken": ("chicken", "hen", "poultry", "कुखुरा", "kukhura"),
+    "duck": ("duck", "हाँस"),
+    "bird": ("parrot", "pigeon", "budgie", "सुगा", "परेवा", "चरा"),
+    "guinea_pig": ("guinea pig", "hamster"),
+    "horse": ("horse", "mule", "donkey", "घोडा", "खच्चड", "गधा"),
+    "fish": ("aquarium fish", "pet fish", "माछा"),
+}
+# "the dog bit me", "बिरालोले कोतर्यो" ... -> a person may need rabies vaccine: human case.
+ANIMAL_BITE = ("bit me", "bitten", "bite", "scratched", "टोक्यो", "टोकेको", "टोक्यो", "कोतर्‍यो", "कोतर्यो", "कोपर्यो",
+               "tokyo", "toketo", "rabies", "रेबिज")
+
+
+def animal_bite(text: str) -> bool:
+    """True if the text describes an animal biting or scratching (a person may need rabies care)."""
+    norm = _normalize(text or "")
+    return any(_has(p, norm) for p in ANIMAL_BITE)
+
+
+def animal_mentioned(text: str) -> str:
+    """The animal the text is about (e.g. "rabbit"), or "" if none or if it describes a bite on a person."""
+    norm = _normalize(text or "")
+    if animal_bite(text):
+        return ""
+    for species, words in ANIMAL_WORDS.items():
+        if any(_has(w, norm) for w in words):
+            return species
+    return ""
+
+
+ANIMAL_RULES: tuple[RedFlagRule, ...] = (
+    RedFlagRule(
+        id="animal_not_eating_small",
+        label_en="A rabbit or guinea pig that stops eating can become seriously ill within a day",
+        label_ne="खरायो वा गिनी पिगले खान छोड्यो भने एक दिनभित्रै गम्भीर हुन सक्छ",
+        all_groups=(
+            ("rabbit", "bunny", "खरायो", "kharayo", "guinea pig"),
+            ("not eat", "won't eat", "stopped eating", "no appetite", "no poop", "no droppings",
+             "खाँदैन", "नखाको", "खाएको छैन", "खान छोड", "खाँदै खाँदैन", "केही पनि खा", "भोक छैन", "दिसा गरेको छैन", "दिसा छैन",
+             "khadaina", "nakhako"),
+        ),
+        action_en="Take it to a vet today. Keep it warm and quiet, offer fresh hay and water, and do not give any human medicine.",
+        action_ne="आजै पशु चिकित्सककहाँ लैजानुहोस्। न्यानो र शान्त ठाउँमा राख्नुहोस्, ताजा घाँस र पानी दिनुहोस्, मान्छेको औषधि नदिनुहोस्।",
+    ),
+    RedFlagRule(
+        id="animal_breathing",
+        label_en="Breathing trouble",
+        label_ne="सास फेर्न गाह्रो",
+        any_of=("can't breathe", "cannot breathe", "difficulty breathing", "breathing fast", "gasping", "open mouth breathing",
+                "सास फेर्न गाह्रो", "सास फेर्न सक्दैन", "स्वाँ स्वाँ", "हाँफ्दै", "saas pherna garo"),
+        action_en="Go to a vet now and call them on the way.",
+        action_ne="अहिले नै पशु चिकित्सककहाँ जानुहोस्, बाटोमै फोन गर्नुहोस्।",
+    ),
+    RedFlagRule(
+        id="animal_collapse",
+        label_en="Collapsed, cannot stand, or fits",
+        label_ne="ढलेको, उठ्न नसक्ने वा काम्ने/छारे रोग जस्तो",
+        any_of=("collapsed", "can't stand", "cannot stand", "unconscious", "seizure", "fits", "convulsion", "not moving",
+                "ढल्यो", "उठ्न सक्दैन", "उठ्दैन", "बेहोस", "काँप्दै", "छारे", "चल्दैन"),
+        action_en="Go to a vet now. Keep the animal warm and move it gently.",
+        action_ne="अहिले नै पशु चिकित्सककहाँ जानुहोस्। जनावरलाई न्यानो राख्नुहोस् र बिस्तारै सार्नुहोस्।",
+    ),
+    RedFlagRule(
+        id="animal_bleeding_injury",
+        label_en="Heavy bleeding or serious injury",
+        label_ne="धेरै रगत बगेको वा गम्भीर चोट",
+        any_of=("bleeding a lot", "heavy bleeding", "hit by", "broken leg", "accident",
+                "धेरै रगत", "रगत बगिरहेको", "गाडीले हान्यो", "गाडीले ठक्कर", "खुट्टा भाँचियो", "दुर्घटना"),
+        action_en="Press a clean cloth on the wound and go to a vet now.",
+        action_ne="घाउमा सफा कपडाले थिच्नुहोस् र अहिले नै पशु चिकित्सककहाँ जानुहोस्।",
+    ),
+    RedFlagRule(
+        id="animal_poison",
+        label_en="May have eaten poison",
+        label_ne="विष खाएको हुन सक्छ",
+        any_of=("poison", "rat poison", "pesticide", "ate chocolate", "विष", "मुसा मार्ने", "किटनाशक", "बिषादी", "चकलेट खायो"),
+        action_en="Go to a vet now and bring the packet if you have it. Do not make the animal vomit unless a vet says so.",
+        action_ne="अहिले नै पशु चिकित्सककहाँ जानुहोस्, विषको प्याकेट भए साथमा लैजानुहोस्। पशु चिकित्सकले नभनी बान्ता नगराउनुहोस्।",
+    ),
+    RedFlagRule(
+        id="animal_bloat_birth",
+        label_en="Swollen belly (bloat) or trouble giving birth",
+        label_ne="पेट फुलेको वा ब्याउन गाह्रो",
+        any_of=("bloat", "belly swollen", "swollen belly", "difficult birth", "can't give birth", "stuck calf",
+                "पेट फुल्यो", "पेट फुलेको", "ब्याउन सकेन", "ब्याउन गाह्रो", "पाठो अड्कियो", "बाछो अड्कियो"),
+        action_en="Call or go to a vet now. This can become life-threatening within hours.",
+        action_ne="अहिले नै पशु चिकित्सकलाई बोलाउनुहोस् वा लैजानुहोस्। केही घण्टामै ज्यान जोखिममा पर्न सक्छ।",
+    ),
+)
+
+
+def check_animal(text: str) -> dict:
+    """Animal danger signs. Same result shape as check_text, plus "subject": "animal"."""
+    norm = _normalize(text or "")
+    hits = []
+    for rule in ANIMAL_RULES:
+        fired = any(_has(p, norm) for p in rule.any_of)
+        if not fired and rule.all_groups:
+            fired = all(any(_has(p, norm) for p in group) for group in rule.all_groups)
+        if fired:
+            hits.append({"id": rule.id, "label_en": rule.label_en, "label_ne": rule.label_ne,
+                         "action_en": rule.action_en, "action_ne": rule.action_ne})
+    return {"is_emergency": bool(hits), "flags": hits, "subject": "animal"}
+
+
+def banner_check(text: str) -> dict:
+    """What the browser shows before the report: human red flags (with "Call 102") always win; animal danger
+    signs are shown only when the text is about an animal and no human red flag fired."""
+    human = check_text(text)
+    if human["is_emergency"] or not animal_mentioned(text):
+        return {**human, "subject": "person"}
+    return check_animal(text)

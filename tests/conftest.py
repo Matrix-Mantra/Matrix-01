@@ -27,7 +27,7 @@ def bearer(name="Sita Sharma"):
 
 
 def fake_triage(**over):
-    base = dict(is_health_problem=True, patient="father, 62", key_symptoms=["chest pain"], duration="2 days",
+    base = dict(is_health_problem=True, subject="person", animal="", patient="father, 62", key_symptoms=["chest pain"], duration="2 days",
                 urgency="soon", department="cardiology", alternative_department="general_medicine",
                 district_mentioned="", cost_worry=False)
     base.update(over)

@@ -7,7 +7,7 @@
   @font-face { font-family: Mukta; src: url("{{ font_dir }}/Mukta-Bold.ttf"); font-weight: 700; }
   @font-face { font-family: Mukta; src: url("{{ font_dir }}/Mukta-ExtraBold.ttf"); font-weight: 800; }
   @page { size: A4; margin: 16mm 15mm 18mm;
-    @bottom-left { content: "{{ t.footer }}"; font-family: Mukta; font-size: 8.5pt; color: #586A79; }
+    @bottom-left { content: "{{ t.vet_footer if r.kind == 'animal' else t.footer }}"; font-family: Mukta; font-size: 8.5pt; color: #586A79; }
     @bottom-right { content: counter(page) " / " counter(pages); font-family: Mukta; font-size: 8.5pt; color: #586A79; } }
   * { box-sizing: border-box; }
   body { font-family: Mukta, sans-serif; font-size: 11pt; line-height: 1.5; color: #16324A; margin: 0; }
@@ -50,7 +50,7 @@
   <div class="urgency">
     <b>{{ r.urgency_text }}</b>
     {{ r.urgency_reason }}
-    {% if r.urgency == "emergency" %}<div class="call">{{ t.call102 }}</div>{% endif %}
+    {% if r.urgency == "emergency" %}<div class="call">{{ t.vet_now if r.kind == "animal" else t.call102 }}</div>{% endif %}
   </div>
 
   <p>{{ r.summary }}</p>
@@ -58,6 +58,9 @@
   <h2>{{ t.do_now }}</h2>
   <ol>{% for s in r.do_now %}<li>{{ s }}</li>{% endfor %}</ol>
 
+  {% if r.kind == "animal" %}
+  {% include "report_animal.html" %}
+  {% else %}
   <div class="dept">
     <h3>{{ t.department }}: {{ r.department_label }}</h3>
     <p>{{ r.department_reason or r.department_about }}</p>
@@ -131,6 +134,7 @@
   {% if r.schemes %}
   <h2>{{ t.schemes }}</h2>
   {% for s in r.schemes %}<p><b>{{ s.name }}.</b> {{ s.summary }} <span class="muted">{{ s.how }}</span></p>{% endfor %}
+  {% endif %}
   {% endif %}
 
   <div class="said"><b>{{ t.you_said }}:</b> “{{ r.transcript }}”</div>
