@@ -1,0 +1,46 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// All reads and writes go through the FastAPI backend (app/store.py), which
+// uses a service account / Cloud Run identity. Server SDKs bypass these rules,
+// so browsers and mobile clients never need direct Firestore access.
+//
+// Collection: hospitals/{hospitalId}/reviews
+// Document ID: Firebase Auth uid of the reviewer (one review per user per hospital)
+// Fields:
+//   - hospital_id: string (required, immutable) - id from data/hospitals
+//   - uid: string (required, immutable) - reviewer's Firebase Auth uid
+//   - author: string (required) - short display name, e.g. "Sita S."
+//   - rating: number (required, integer 1-5)
+//   - comment: string (required, may be empty, <= MAX_COMMENT_CHARS)
+//   - created_at: number (required, immutable) - unix seconds
+//   - updated_at: number (required) - unix seconds
+//
+// Collection: users
+// Document ID: Firebase Auth uid
+// Fields:
+//   - uid: string (required, immutable)
+//   - name: string (required)
+//   - email: string (required, may be empty) - PII
+//   - created_at, last_login_at: number (unix seconds)
+//   - login_count: number
+//
+// ===============================================================
+// Access policy
+// ===============================================================
+//
+// Default deny for every client. users/* holds email addresses (PII), and
+// reviews are validated, rate-limited and de-duplicated by the backend, so no
+// path is opened to clients. If the web app later reads or writes Firestore
+// directly, add narrowly scoped, validated rules here.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
