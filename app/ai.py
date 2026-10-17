@@ -124,7 +124,13 @@ def transcribe(data: bytes, mime_type: str) -> str:
 
 
 class Triage(BaseModel):
-    is_health_problem: bool = Field(description="False if the text does not describe a health problem or need.")
+    is_health_problem: bool = Field(description="False if the text does not describe a health problem or need "
+                                                "(of a person or of an animal).")
+    subject: Literal["person", "animal"] = Field(description="'animal' if the problem is about a pet or farm animal; "
+                                                             "'person' if about a human, including a person bitten "
+                                                             "or scratched by an animal.")
+    animal: str = Field(description="If subject is animal: the kind of animal in English, e.g. 'rabbit', 'cow'. "
+                                    "Otherwise empty.")
     patient: str = Field(description="Who is sick and their age if mentioned, e.g. 'father, 62'. Empty if unknown.")
     key_symptoms: list[str] = Field(description="Main symptoms in short words, in the transcript's language.")
     duration: str = Field(description="How long it has been happening, if mentioned. Empty if unknown.")
@@ -139,6 +145,12 @@ TRIAGE_PROMPT = """\
 You help people in Nepal find the right hospital department. You are NOT a doctor and must not diagnose.
 Read what the person said (it may be Nepali, romanized Nepali or English, and may contain speech-recognition
 mistakes) and fill in the fields.
+
+People also ask about their animals (pets like rabbits, dogs, cats, birds; farm animals like cows, buffaloes,
+goats, chickens). Then set subject="animal", name the animal, and judge urgency FOR THE ANIMAL with the same
+levels. A rabbit or guinea pig that has stopped eating is at least "urgent". If an animal bit or scratched a
+PERSON, the subject is "person" (rabies risk: urgency at least "urgent", department "emergency" or
+"general_medicine"). For animals, set department to "general_medicine" (it is not used).
 
 Urgency rules:
 - emergency: danger signs now (chest pain, severe breathing trouble, unconscious, fits, stroke signs, heavy
@@ -199,6 +211,62 @@ Department to visit: {department} ({department_label})
 Person's location: {origin}
 Candidate hospitals (JSON): {candidates}
 Nearest general hospital (JSON, may be null): {nearest_general}"""
+
+
+class VetPick(BaseModel):
+    vet_id: str = Field(description="Must be one of the candidate vet ids.")
+    why: str = Field(description="One short sentence: why this place (distance, type).")
+
+
+class VetReportText(BaseModel):
+    title: str = Field(description="Short title, e.g. 'Rabbit not eating: see a vet today'.")
+    summary: str = Field(description="2-3 simple sentences: what the person told us and what we suggest.")
+    urgency_reason: str = Field(description="One sentence on why this level of urgency for the animal.")
+    do_now: list[str] = Field(description="2-4 short, practical steps to take now, most important first.")
+    care_at_home: list[str] = Field(description="2-5 safe general comfort steps until the vet visit (warmth, quiet, "
+                                                "water). No medicines.")
+    food_tips: list[str] = Field(description="2-4 tips on what this animal normally eats and what to offer now. "
+                                             "Empty if feeding is not relevant.")
+    picks: list[VetPick] = Field(description="0-3 vets from the candidates, best first. Empty if there are none.")
+    tell_the_vet: list[str] = Field(description="2-4 things to tell or ask the vet (when it started, what it ate...).")
+    warning_signs: list[str] = Field(description="2-4 signs that mean go to a vet immediately.")
+    travel_tip: str = Field(description="One practical tip about taking the animal there. Empty if nothing useful.")
+
+
+VET_PROMPT = """\
+You write a short, clear guide for a person in Nepal whose animal is unwell. They may have little education.
+Write ALL text in {language}. Use simple everyday words and short sentences.
+
+STRICT RULES
+- You are not a vet. Do not diagnose or name a disease. You may say what kind of problem it could be in plain,
+  general words only if it helps the person act (e.g. "its stomach may have stopped working"), never as a certainty.
+- Never suggest any medicine or dose, and tell the person NOT to give human medicines (many are poisonous to animals).
+- Choose vets ONLY from the candidate list, by id. Do not invent clinics, phone numbers, prices or opening hours.
+  If the candidate list is empty, leave picks empty: the app adds the district government vet office and a map
+  search for vets nearby.
+- If urgency is emergency, the first do_now step must be to take the animal to a vet right now.
+- Food tips must be standard, safe feeding for this kind of animal (e.g. rabbits: plenty of hay, fresh greens,
+  water; no bread, sweets or cooked food).
+
+What the person said: \"\"\"{text}\"\"\"
+Animal: {animal}
+Urgency for the animal: {urgency}
+Danger signs found by our rules (JSON): {flags}
+Person's location: {origin}
+District government vet office: {office}
+Candidate vets (JSON, may be empty): {candidates}"""
+
+
+def write_vet_report(*, text: str, animal: str, urgency: str, flags: list[dict], origin_label: str,
+                     office: str, candidates: list[dict], lang: str) -> VetReportText:
+    slim = [{k: c.get(k) for k in ("id", "name", "type_label", "city", "district", "distance_km")} for c in candidates]
+    prompt = VET_PROMPT.format(
+        language="simple Nepali (Devanagari script)" if lang == "ne" else "simple English", text=text,
+        animal=animal or "unknown", urgency=urgency, flags=json.dumps([f["label_en"] for f in flags]),
+        origin=origin_label or "unknown", office=office or "unknown",
+        candidates=json.dumps(slim, ensure_ascii=False),
+    )
+    return _json_call(config.REPORT_MODEL, [prompt], VetReportText, temperature=0.3)
 
 
 def write_report(*, text: str, triage_result: Triage, department: str, department_label: str, origin_label: str,

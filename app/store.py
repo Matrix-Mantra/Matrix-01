@@ -1,8 +1,11 @@
-"""Hospital reviews storage. One review per user per hospital (posting again replaces it).
+"""Storage for hospital reviews and user accounts.
+
+Reviews: one per user per hospital (posting again replaces it).
+Users: one row per login account (name, email, first and last login, number of logins).
 
 SqliteStore  - local development and tests (file on disk).
 FirestoreStore - Cloud Run (Cloud Run disks are temporary, so production must use Firestore).
-             Layout: hospitals/{hospital_id}/reviews/{uid}
+             Layout: hospitals/{hospital_id}/reviews/{uid}, users/{uid}
 """
 
 from __future__ import annotations
@@ -20,6 +23,11 @@ def _public(r: dict) -> dict:
             "created_at": r["created_at"], "updated_at": r["updated_at"], "uid": r["uid"]}
 
 
+def _user(r: dict) -> dict:
+    return {"uid": r["uid"], "name": r["name"], "email": r.get("email") or "", "created_at": r["created_at"],
+            "last_login_at": r["last_login_at"], "login_count": r["login_count"]}
+
+
 class SqliteStore:
     def __init__(self, path: str):
         self.path = path
@@ -30,6 +38,11 @@ class SqliteStore:
                     hospital_id TEXT NOT NULL, uid TEXT NOT NULL, author TEXT NOT NULL,
                     rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5), comment TEXT NOT NULL DEFAULT '',
                     created_at REAL NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY (hospital_id, uid))"""
+            )
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS users (
+                    uid TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL DEFAULT '',
+                    created_at REAL NOT NULL, last_login_at REAL NOT NULL, login_count INTEGER NOT NULL DEFAULT 0)"""
             )
 
     def _conn(self) -> sqlite3.Connection:
@@ -64,6 +77,31 @@ class SqliteStore:
         with self._conn() as c:
             rows = c.execute("SELECT hospital_id, AVG(rating) a, COUNT(*) n FROM reviews GROUP BY hospital_id").fetchall()
         return {r["hospital_id"]: {"avg": round(r["a"], 1), "count": r["n"]} for r in rows}
+
+    def record_login(self, uid: str, name: str, email: str = "") -> dict:
+        """Create the user on first login, otherwise update name, last login and count. Empty email keeps the old one."""
+        now = time.time()
+        with self._lock, self._conn() as c:
+            c.execute(
+                """INSERT INTO users (uid, name, email, created_at, last_login_at, login_count) VALUES (?, ?, ?, ?, ?, 1)
+                   ON CONFLICT(uid) DO UPDATE SET name=excluded.name, last_login_at=excluded.last_login_at,
+                   login_count=users.login_count + 1,
+                   email=CASE WHEN excluded.email != '' THEN excluded.email ELSE users.email END""",
+                (uid, name, email, now, now),
+            )
+            row = c.execute("SELECT * FROM users WHERE uid=?", (uid,)).fetchone()
+        return _user(dict(row))
+
+    def get_user(self, uid: str) -> dict | None:
+        with self._conn() as c:
+            row = c.execute("SELECT * FROM users WHERE uid=?", (uid,)).fetchone()
+        return _user(dict(row)) if row else None
+
+    def set_email(self, uid: str, email: str) -> dict | None:
+        with self._lock, self._conn() as c:
+            c.execute("UPDATE users SET email=? WHERE uid=?", (email, uid))
+            row = c.execute("SELECT * FROM users WHERE uid=?", (uid,)).fetchone()
+        return _user(dict(row)) if row else None
 
 
 class FirestoreStore:
@@ -113,6 +151,27 @@ class FirestoreStore:
         out = {h: {"avg": round(sum(v) / len(v), 1), "count": len(v)} for h, v in acc.items()}
         self._cache = (time.time(), out)
         return out
+
+    def record_login(self, uid: str, name: str, email: str = "") -> dict:
+        ref = self.db.collection("users").document(uid)
+        now = time.time()
+        snap = ref.get()
+        old = snap.to_dict() if snap.exists else {}
+        doc = {"uid": uid, "name": name, "email": email or old.get("email", ""), "created_at": old.get("created_at", now),
+               "last_login_at": now, "login_count": old.get("login_count", 0) + 1}
+        ref.set(doc)
+        return _user(doc)
+
+    def get_user(self, uid: str) -> dict | None:
+        snap = self.db.collection("users").document(uid).get()
+        return _user(snap.to_dict()) if snap.exists else None
+
+    def set_email(self, uid: str, email: str) -> dict | None:
+        ref = self.db.collection("users").document(uid)
+        if not ref.get().exists:
+            return None
+        ref.update({"email": email})
+        return self.get_user(uid)
 
 
 @lru_cache(maxsize=1)

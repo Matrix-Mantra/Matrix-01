@@ -126,13 +126,56 @@ def test_firebase_mode_verifies_token(client, monkeypatch):
         seen["aud"] = audience
         if token != "good":
             raise ValueError("bad")
-        return {"sub": "uid123", "name": "Maya Gurung"}
+        return {"sub": "uid123", "name": "Maya Gurung", "email": "maya@example.com", "email_verified": True}
 
     monkeypatch.setattr(id_token, "verify_firebase_token", fake_verify)
-    assert client.get("/api/me", headers={"Authorization": "Bearer good"}).json() == {"uid": "uid123", "name": "Maya G."}
+    assert client.get("/api/me", headers={"Authorization": "Bearer good"}).json() == {
+        "uid": "uid123", "name": "Maya G.", "email": "maya@example.com"}
+    # the verified Google email is saved on login, whatever the browser sends
+    r = client.post("/api/login", json={"email": "other@example.com"}, headers={"Authorization": "Bearer good"})
+    assert r.json()["email"] == "maya@example.com"
     assert seen["aud"] == "proj"
     assert client.get("/api/me", headers={"Authorization": "Bearer bad"}).status_code == 401
     assert client.get("/api/me", headers=bearer()).status_code == 401  # dev tokens rejected in firebase mode
+
+
+def test_login_saves_user_and_email(client):
+    from app.store import get_store
+    assert client.post("/api/login", json={"email": "not-an-email"}, headers=bearer("Sita Sharma")).status_code == 422
+    r = client.post("/api/login", json={"email": "sita@example.com"}, headers=bearer("Sita Sharma")).json()
+    assert r == {"uid": "dev-sita-sharma", "name": "Sita S.", "email": "sita@example.com"}
+    client.post("/api/login", json={}, headers=bearer("Sita Sharma"))  # later login without email keeps it
+    u = get_store().get_user("dev-sita-sharma")
+    assert u["email"] == "sita@example.com" and u["login_count"] == 2
+    assert client.get("/api/me", headers=bearer("Sita Sharma")).json()["email"] == "sita@example.com"
+    assert client.put("/api/me", json={"email": "new@example.org"}, headers=bearer("Sita Sharma")).json()["email"] == "new@example.org"
+    assert client.put("/api/me", json={"email": ""}, headers=bearer("Sita Sharma")).status_code == 422
+
+
+# ------------------------------------------------------------------ ranking
+
+
+def test_ranking_scores_and_ties(client):
+    from app import ranking
+    d = client.get("/api/ranking", params={"lang": "en"}).json()
+    rows = d["hospitals"]
+    assert len(rows) == d["stats"]["hospitals"] == len(hospitals.all_hospitals())
+    assert sum(i["weight"] for i in d["indicators"]) == 100
+    assert [r["overall"] for r in rows] == sorted((r["overall"] for r in rows), reverse=True)
+    assert rows[0]["rank"] == 1 and all(0 <= r["overall"] <= 100 for r in rows)
+    for a, b in zip(rows, rows[1:]):  # equal scores share a rank, QS style
+        assert (b["rank"] == a["rank"]) == (b["overall"] == a["overall"])
+        assert b["tied"] or b["rank"] != a["rank"]
+    assert all(r["scores"]["rating"] is None for r in rows)  # no reviews yet -> pending, weight re-shared
+    s = {"specialties": 50.0, "emergency": 100.0, "insurance": 0.0, "teaching": 0.0, "rating": None}
+    assert ranking.overall(s) == round((50 * 35 + 100 * 20) / 80, 1)
+
+
+def test_ranking_counts_ratings_after_min_reviews(client):
+    for i, name in enumerate(["A One", "B Two", "C Three"]):
+        client.post("/api/hospitals/bir/reviews", json={"rating": 5}, headers=bearer(name))
+        bir = next(r for r in client.get("/api/ranking").json()["hospitals"] if r["id"] == "bir")
+        assert (bir["scores"]["rating"] == 100.0) == (i == 2)
 
 
 # ------------------------------------------------------------------ report pipeline
@@ -263,3 +306,80 @@ def test_pdf_html_escapes_text(client, monkeypatch):
 def test_list_sorted_from_saved_district(client):
     rows = client.get("/api/hospitals", params={"near": "Kaski"}).json()["hospitals"]
     assert rows[0]["district"] == "Kaski" and rows[0]["distance_km"] < 5
+
+
+def test_email_report(client, monkeypatch, tmp_path):
+    import email
+    rep = _report_for_pdf(client, monkeypatch)
+    monkeypatch.setattr(config, "SMTP_HOST", "")
+    monkeypatch.setattr(config, "MAIL_OUTBOX", "")
+    assert client.post("/api/report/email", json=rep, headers=bearer()).status_code == 503
+    monkeypatch.setattr(config, "MAIL_OUTBOX", str(tmp_path / "outbox"))
+    assert client.get("/api/config").json()["email_enabled"]
+    assert client.post("/api/report/email", json=rep, headers=bearer()).status_code == 400  # no email saved yet
+    client.post("/api/login", json={"email": "sita@example.com"}, headers=bearer())
+    r = client.post("/api/report/email", json=rep, headers=bearer())
+    assert r.status_code == 200 and r.json() == {"sent_to": "sita@example.com", "delivered": False}
+    [eml] = list((tmp_path / "outbox").glob("*.eml"))
+    msg = email.message_from_bytes(eml.read_bytes())
+    assert msg["To"] == "sita@example.com"
+    att = [p for p in msg.walk() if p.get_content_type() == "application/pdf"]
+    assert att and att[0].get_payload(decode=True)[:4] == b"%PDF"
+    assert client.post("/api/report/email", json=rep).status_code == 401
+
+
+# ------------------------------------------------------------------ animals → vets
+
+RABBIT = "मेरो खरायोले कति दिन भयो केही पनि नखाको, एउटै ठाउँमा मात्रै बसिराख्छ। एनिमल हस्पिटल कतै छ त?"
+
+
+def test_animal_safety_rules():
+    assert safety.animal_mentioned(RABBIT) == "rabbit"
+    assert [f["id"] for f in safety.check_animal(RABBIT)["flags"]] == ["animal_not_eating_small"]
+    assert safety.banner_check(RABBIT)["subject"] == "animal"
+    # a bite on a person stays a human case (rabies)
+    assert safety.animal_bite("कुकुरले छोरालाई टोक्यो") and safety.animal_mentioned("कुकुरले छोरालाई टोक्यो") == ""
+    # human red flags always keep the human banner with "Call 102"
+    b = safety.banner_check("मेरो छोरालाई छाती दुख्यो, कुकुर देखेर डरायो")
+    assert b["subject"] == "person" and b["is_emergency"]
+
+
+def _fake_vet_text(picks):
+    return ai.VetReportText(title="Rabbit not eating", summary="S.", urgency_reason="R.", do_now=["Go to a vet today"],
+                            care_at_home=["Keep it warm"], food_tips=["Hay"], picks=[ai.VetPick(vet_id=p, why="near")
+                                                                                       for p in picks],
+                            tell_the_vet=["When it stopped eating"], warning_signs=["Cannot stand"], travel_tip="")
+
+
+def test_animal_report_uses_real_vets(client, monkeypatch):
+    from app import vets
+    seen = {}
+    monkeypatch.setattr(ai, "triage", lambda text: fake_triage(subject="animal", animal="rabbit", urgency="soon"))
+
+    def fake_write(**kw):
+        seen.update(kw)
+        return _fake_vet_text(["made-up-clinic", kw["candidates"][0]["id"]])
+
+    monkeypatch.setattr(ai, "write_vet_report", fake_write)
+    r = client.post("/api/report", json={"text": RABBIT, "lang": "ne", "district": "Kathmandu"}, headers=bearer()).json()
+    assert r["kind"] == "animal" and r["animal_label"] == "खरायो"
+    assert r["urgency"] == "urgent"  # the rule raises "soon" to "see a vet today"
+    ids = {v["id"] for v in vets.all_vets()}
+    assert r["hospitals"] and all(h["id"] in ids for h in r["hospitals"])  # invented clinic dropped
+    assert all(h["distance_km"] <= vets.MAX_KM for h in seen["candidates"])
+    assert r["district_office"]["name"].endswith("Kathmandu")
+    assert r["vet_search_url"].startswith("https://www.google.com/maps/search/")
+    pdf_r = client.post("/api/report/pdf", json=r, headers=bearer())
+    assert pdf_r.status_code == 200 and pdf_r.content[:4] == b"%PDF"
+    bad = {**r, "vet_search_url": "https://evil.example/"}
+    assert client.post("/api/report/pdf", json=bad, headers=bearer()).status_code == 422
+
+
+def test_animal_bite_on_person_stays_human(client, monkeypatch):
+    called = {}
+    monkeypatch.setattr(ai, "triage", lambda text: fake_triage(subject="animal", animal="dog", department="emergency"))
+    monkeypatch.setattr(ai, "write_vet_report", lambda **kw: called.setdefault("vet", True))
+    monkeypatch.setattr(ai, "write_report", lambda **kw: fake_report_text([kw["candidates"][0]["id"]]))
+    r = client.post("/api/report", json={"text": "कुकुरले छोरालाई टोक्यो", "district": "Kathmandu"}, headers=bearer()).json()
+    assert "vet" not in called and r.get("kind") != "animal" and r["department"] == "emergency"
+

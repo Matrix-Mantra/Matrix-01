@@ -40,6 +40,17 @@ SQLITE_PATH = os.getenv("SQLITE_PATH", str(BASE_DIR.parent / "local.db"))
 # --- Maps: optional Google Maps Embed API key (free) for a directions map; without it a location map is shown
 MAPS_EMBED_API_KEY = os.getenv("MAPS_EMBED_API_KEY", "")
 
+# --- Email (report by email). Any SMTP server works, e.g. Gmail with an App Password:
+# SMTP_HOST=smtp.gmail.com SMTP_PORT=587 SMTP_USER=you@gmail.com SMTP_PASSWORD=<app password> MAIL_FROM=you@gmail.com
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+MAIL_FROM = os.getenv("MAIL_FROM", "") or SMTP_USER
+# Without SMTP, set MAIL_OUTBOX to a folder to save emails there as .eml files instead (local testing)
+MAIL_OUTBOX = os.getenv("MAIL_OUTBOX", "")
+DAILY_EMAIL_LIMIT = int(os.getenv("DAILY_EMAIL_LIMIT", "10"))
+
 # --- Limits
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_TRANSCRIPT_CHARS = 3000

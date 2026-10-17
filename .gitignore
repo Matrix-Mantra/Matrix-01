@@ -6,4 +6,7 @@ __pycache__/
 .pytest_cache/
 *.db
 eval/results.md
+outbox/
 .DS_Store
+secrets/
+*firebase-adminsdk*.json

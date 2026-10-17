@@ -1,0 +1,55 @@
+{# Animal (vet) report body: included by report.html when r.kind == "animal". #}
+  <div class="dept"><h3>{{ t.animal }}: {{ r.animal_label }}</h3></div>
+
+  {% if r.hospitals %}
+  {% set h = r.hospitals[0] %}
+  <h2>{{ t.go_to_vet }}</h2>
+  <div class="hosp">
+    <div class="hosp-head">
+      <div>
+        <div class="hosp-name">{{ h.name_ne if r.lang == "ne" and h.name_ne else h.name }}</div>
+        {% if r.lang == "ne" and h.name_ne %}<div class="hosp-sub">{{ h.name }}</div>{% endif %}
+        <div class="hosp-sub">{{ h.city }}, {{ h.district }} · {{ h.type_label }}{% if h.distance_km is not none %} · {{ h.distance_km }} {{ t.km }}{% endif %}</div>
+        <div class="badges">{% if h.phone %}<span>☎ {{ h.phone }}</span>{% endif %}{% if not h.verified %}<span>{{ t.unverified }}</span>{% endif %}</div>
+        {% if h.why %}<p style="margin-top:2mm">{{ h.why }}</p>{% endif %}
+        <div class="link"><a href="{{ h.directions_url }}">{{ t.open_maps }}</a></div>
+      </div>
+      <div class="qr"><img src="{{ qr[h.id] }}" alt="">{{ t.scan }}</div>
+    </div>
+  </div>
+  {% for h in r.hospitals[1:] %}
+  <div class="other">
+    <b>{{ h.name_ne if r.lang == "ne" and h.name_ne else h.name }}</b>
+    <span class="muted"> · {{ h.city }}{% if h.distance_km is not none %} · {{ h.distance_km }} {{ t.km }}{% endif %}</span>
+    {% if h.why %}<div>{{ h.why }}</div>{% endif %}
+    <div class="link"><a href="{{ h.directions_url }}">{{ t.open_maps }}</a></div>
+  </div>
+  {% endfor %}
+  {% else %}
+  <h2>{{ t.go_to_vet }}</h2>
+  {% endif %}
+  {% if r.district_office %}
+  <p><b>{{ t.office }}:</b> {{ r.district_office.name }}<br>
+     <span class="link"><a href="{{ r.district_office.search_url }}">{{ t.open_maps }}</a></span></p>
+  {% endif %}
+  {% if r.vet_search_url %}<p class="link"><a href="{{ r.vet_search_url }}">{{ t.find_vets }}</a></p>{% endif %}
+
+  {% if r.travel_tip %}<p><b>{{ t.tip }}:</b> {{ r.travel_tip }}</p>{% endif %}
+
+  <h2>{{ t.care }}</h2>
+  <ul>{% for s in r.care_at_home %}<li>{{ s }}</li>{% endfor %}</ul>
+  {% if r.food_tips %}
+  <h2>{{ t.food }}</h2>
+  <ul>{% for s in r.food_tips %}<li>{{ s }}</li>{% endfor %}</ul>
+  {% endif %}
+
+  <div class="cols">
+    <div>
+      <h2>{{ t.tell_vet }}</h2>
+      <ul>{% for s in r.tell_the_vet %}<li>{{ s }}</li>{% endfor %}</ul>
+    </div>
+    <div>
+      <h2>{{ t.vet_warning }}</h2>
+      <ul>{% for s in r.warning_signs %}<li>{{ s }}</li>{% endfor %}</ul>
+    </div>
+  </div>

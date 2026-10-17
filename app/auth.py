@@ -22,6 +22,7 @@ from . import config
 class User:
     uid: str
     name: str
+    email: str = ""  # verified Google email (Firebase); dev logins give theirs at /api/login
 
 
 def _short_name(full: str) -> str:
@@ -43,7 +44,9 @@ def _verify_firebase(token: str) -> User:
         raise HTTPException(401, "Login expired. Please log in again.") from exc
     if not claims or not claims.get("sub"):
         raise HTTPException(401, "Invalid login.")
-    return User(uid=claims["sub"], name=_short_name(claims.get("name") or claims.get("email", "").split("@")[0]))
+    email = claims.get("email", "") if claims.get("email_verified") else ""
+    return User(uid=claims["sub"], name=_short_name(claims.get("name") or claims.get("email", "").split("@")[0]),
+                email=email)
 
 
 def _verify_dev(token: str) -> User:

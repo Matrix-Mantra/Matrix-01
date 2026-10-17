@@ -36,7 +36,7 @@ const ICON = {
   back: "M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z",
   down: "M5 20h14v-2H5zM19 9h-4V3H9v6H5l7 7z",
   speaker: "M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06A9 9 0 0 0 14 3.23z",
-  share: "M18 16a3 3 0 0 0-2.4 1.2l-6.7-3.4a3 3 0 0 0 0-1.6l6.7-3.4A3 3 0 1 0 15 7l-6.7 3.4a3 3 0 1 0 0 3.2L15 17a3 3 0 1 0 3-1z",
+  mail: "M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 4-8 5-8-5V6l8 5 8-5z",
 };
 
 function fill(node, parts) { node.replaceChildren(...parts.flat(Infinity).filter((x) => x != null && x !== false)); }
@@ -46,11 +46,14 @@ function toast(msg) {
   clearTimeout(toast.t); toast.t = setTimeout(() => (n.hidden = true), 2600);
 }
 
+// Report by email is hidden until an email service is connected (set to true to show the "Email me" button).
+const SHOW_EMAIL = false;
+
 // ------------------------------------------------------------------ state
 const S = {
   cfg: null,
   lang: store.get("ss_lang") || "ne",
-  user: null,            // {name}
+  user: null,            // {name, email}
   getToken: async () => null,
   place: loadPlace(),    // {district} or {lat,lng}
   report: loadReport(),
@@ -107,18 +110,27 @@ async function initAuth() {
     firebaseAuth = { auth, ...authMod };
     S.getToken = async () => (auth.currentUser ? auth.currentUser.getIdToken() : null);
     await new Promise((resolve) => {
-      authMod.onAuthStateChanged(auth, (u) => {
-        S.user = u ? { name: u.displayName || (u.email || "").split("@")[0] } : null;
+      authMod.onAuthStateChanged(auth, async (u) => {
+        S.user = u ? { name: u.displayName || (u.email || "").split("@")[0], email: u.email || "" } : null;
         renderHeader(); resolve();
+        if (u) syncLogin();
         if (u && afterLogin) { const f = afterLogin; afterLogin = null; f(); }
       });
     });
     authMod.getRedirectResult(auth).catch(() => {});
   } else {
     const name = store.get("ss_dev_name");
-    S.user = name ? { name } : null;
+    S.user = name ? { name, email: "" } : null;
     S.getToken = async () => (S.user ? `dev:${S.user.name}` : null);
+    if (S.user) api("/api/me", { auth: true }).then((p) => { if (S.user) S.user.email = p.email; }).catch(() => {});
   }
+}
+
+// Save the account (and email) in the database after each sign-in.
+async function syncLogin(email = "") {
+  const p = await api("/api/login", { method: "POST", auth: true, body: { email } });
+  if (S.user) S.user.email = p.email;
+  return p;
 }
 
 function openLogin(reason) {
@@ -129,6 +141,7 @@ function openLogin(reason) {
   $("googleBtn").hidden = !fb; $("devLogin").hidden = fb;
   $("googleLabel").textContent = t("google");
   $("devNameLabel").textContent = t("devName"); $("devGo").textContent = t("devGo"); $("devNote").textContent = t("devNote");
+  $("devEmailLabel").textContent = t("devEmail");
   $("loginCancel").textContent = t("cancel");
   $("loginSheet").showModal();
   if (!fb) $("devName").focus();
@@ -152,13 +165,39 @@ async function googleLogin() {
   }
 }
 
-function devLogin() {
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/;
+
+async function devLogin() {
   const name = $("devName").value.trim();
+  const email = $("devEmail").value.trim();
   if (!name) { $("devName").focus(); return; }
+  if (!EMAIL_RE.test(email)) { $("loginError").textContent = t("emailNeeded"); $("loginError").hidden = false; $("devEmail").focus(); return; }
+  S.user = { name, email };
+  try { await syncLogin(email); }
+  catch (e) { S.user = null; $("loginError").textContent = e.message; $("loginError").hidden = false; return; }
   store.set("ss_dev_name", name);
-  S.user = { name };
   $("loginSheet").close(); renderHeader();
   if (afterLogin) { const f = afterLogin; afterLogin = null; f(); }
+}
+
+function openAccount(note) {
+  $("accountName").textContent = S.user.name;
+  $("accountEmailLabel").textContent = t("emailLabel"); $("accountEmail").value = S.user.email || "";
+  $("accountEmail").placeholder = t("emailPh"); $("accountSave").textContent = t("emailSave");
+  $("accountNote").textContent = note || t("emailWhy");
+  $("logoutBtn").textContent = t("logout"); $("accountClose").textContent = t("close");
+  $("accountSheet").showModal();
+  if (note) $("accountEmail").focus();
+}
+
+async function saveEmail() {
+  const email = $("accountEmail").value.trim();
+  if (!EMAIL_RE.test(email)) { toast(t("emailNeeded")); $("accountEmail").focus(); return; }
+  try {
+    const p = await api("/api/me", { method: "PUT", auth: true, body: { email } });
+    S.user.email = p.email; toast(t("emailSaved")); $("accountSheet").close();
+    if (saveEmail.then) { const f = saveEmail.then; saveEmail.then = null; f(); }
+  } catch (e) { toast(e.message); }
 }
 
 async function logout() {
@@ -216,58 +255,96 @@ function stepsList(items) { return el("ol", { class: "steps" }, items.map((s) =>
 function plainList(items) { return el("ul", { class: "plain" }, items.map((s) => el("li", { text: s }))); }
 function block(title, ...content) { return el("section", { class: "block" }, el("h2", { text: title }), ...content); }
 
-// ------------------------------------------------------------------ home
-let dirState = { q: "", district: "", seq: 0 };
+// ------------------------------------------------------------------ home: QS-style ranking
+let rankState = { q: "", province: "", type: "", erOnly: false, sort: "rank", data: null, lang: null };
+
+function scoreBar(v) {
+  if (v == null) return el("span", { class: "rk-pending", text: t("pending") });
+  return el("span", { class: "rk-score" }, el("span", { class: "rk-bar", "aria-hidden": "true" }, el("i", { style: `width:${v}%` })), el("b", { text: Math.round(v) }));
+}
 
 function viewHome() {
   const v = $("view");
-  const mic = el("button", { class: "mic", type: "button", "aria-label": t("startSpeaking"),
+  const mic = el("button", { class: "mic mic-sm", type: "button", "aria-label": t("startSpeaking"),
     onclick: () => requireLogin(t("loginWhyHelp"), () => { location.hash = "#/help"; startRecordingSoon = true; }) }, svg(ICON.mic));
-  const help = el("section", { class: "help" },
-    el("h1", { text: t("helpTitle") }), el("p", { text: t("helpSub") }), mic,
-    el("div", { class: "mic-label", text: t("startSpeaking") }));
+  const cta = el("section", { class: "rk-cta" }, mic,
+    el("div", {}, el("b", { text: t("ctaTitle") }), el("p", { text: `${t("ctaSub")} ${t("animalsToo")}` })),
+    el("button", { class: "primary-btn", type: "button",
+      onclick: () => requireLogin(t("loginWhyHelp"), () => { location.hash = "#/help"; }) }, t("ctaBtn")));
 
-  const q = el("input", { class: "input", type: "search", value: dirState.q, placeholder: t("searchPh"), "aria-label": t("searchPh"),
-    oninput: (e) => { dirState.q = e.target.value; clearTimeout(viewHome.tm); viewHome.tm = setTimeout(loadList, 250); } });
-  const gpsOn = Boolean(S.place && S.place.lat != null);
-  const near = el("button", { class: `near-btn${gpsOn ? " on" : ""}`, type: "button", "aria-pressed": String(gpsOn),
-    onclick: async () => {
-      try { setPlace(await getGps()); near.classList.add("on"); near.setAttribute("aria-pressed", "true"); loadList(); }
-      catch { toast(t("gpsFail")); }
-    } }, svg(ICON.pin), t("nearMe"));
-  const dsel = el("select", { class: "input", "aria-label": t("allDistricts"),
-    onchange: (e) => { dirState.district = e.target.value; loadList(); } },
-    el("option", { value: "", text: t("allDistricts") }),
-    S.cfg.districts.map((d) => el("option", { value: d, text: d, selected: d === dirState.district })));
-  const count = el("span", { class: "count", id: "dirCount" });
-  const list = el("ul", { class: "cards", id: "dirList", "aria-live": "polite" });
-  fill(v, [help, el("section", { class: "dir" }, q,
-    el("div", { class: "filters" }, near, dsel, count), list), el("p", { class: "disclaimer", text: t("disclaimer") }),
+  const stats = el("div", { class: "rk-stats", id: "rkStats" });
+  const sel = (key, opts) => el("select", { class: "input", "aria-label": opts[0][1], onchange: (e) => { rankState[key] = e.target.value; renderRanking(); } },
+    opts.map(([val, label]) => el("option", { value: val, text: label, selected: rankState[key] === val })));
+  const q = el("input", { class: "input rk-search", type: "search", value: rankState.q, placeholder: t("searchPh"), "aria-label": t("searchPh"),
+    oninput: (e) => { rankState.q = e.target.value; renderRanking(); } });
+  const provinces = ["Koshi", "Madhesh", "Bagmati", "Gandaki", "Lumbini", "Karnali", "Sudurpashchim"];
+  const er = el("label", { class: "rk-check" }, el("input", { type: "checkbox", checked: rankState.erOnly,
+    onchange: (e) => { rankState.erOnly = e.target.checked; renderRanking(); } }), t("erOnly"));
+  const controls = el("div", { class: "rk-controls" }, q,
+    sel("province", [["", t("allProvinces")], ...provinces.map((p) => [p, p])]),
+    sel("type", [["", t("allTypes")], ["government", t("typeGovernment")], ["private", t("typePrivate")], ["community", t("typeCommunity")], ["teaching", t("typeTeaching")]]),
+    sel("sort", [["rank", t("sortRank")], ["az", t("sortAZ")], ["rating", t("sortRating")], ["specialties", t("sortSpecialties")]]),
+    er);
+
+  fill(v, [
+    el("section", { class: "rk-hero" },
+      el("p", { class: "rk-eyebrow", text: t("rkEyebrow") }),
+      el("h1", { text: t("rkTitle") }),
+      el("p", { class: "rk-sub", text: t("rkSub") }), stats),
+    cta,
+    el("section", { class: "rk-board" }, controls,
+      el("p", { class: "rk-count", id: "rkCount", "aria-live": "polite" }),
+      el("ol", { class: "rk-cards", id: "rkBody" }, el("li", { class: "empty", text: "…" }))),
+    el("section", { class: "rk-method", id: "rkMethod" }),
+    el("p", { class: "disclaimer", text: t("disclaimer") }),
     S.cfg.osm_attribution ? el("p", { class: "disclaimer" }, "Hospital data includes © ", el("a", { href: "https://www.openstreetmap.org/copyright", target: "_blank", rel: "noopener" }, "OpenStreetMap"), " contributors") : null]);
-  loadList();
+  loadRanking();
 }
 
-async function loadList() {
-  const seq = ++dirState.seq;
-  const params = { q: dirState.q, district: dirState.district, lang: S.lang };
-  if (S.place && S.place.lat != null) Object.assign(params, { lat: S.place.lat, lng: S.place.lng });
-  else if (S.place && S.place.district) params.near = S.place.district;
-  let data;
-  try { data = await api("/api/hospitals", { params }); } catch (e) { if (seq === dirState.seq) $("dirList").replaceChildren(el("li", { class: "empty", text: e.message })); return; }
-  if (seq !== dirState.seq || !$("dirList")) return;
-  $("dirCount").textContent = t("hospitalsCount", data.count);
-  if (!data.count) { $("dirList").replaceChildren(el("li", { class: "empty", text: t("noResults") })); return; }
-  $("dirList").replaceChildren(...data.hospitals.map((h) => el("li", { class: "card" },
-    el("a", { class: "card-link", href: `#/h/${encodeURIComponent(h.id)}` },
-      el("span", { class: "card-head" },
-        el("span", { class: "row-name", text: hName(h) }),
-        h.distance_km != null ? el("span", { class: "card-km", text: `${h.distance_km} ${t("km")}` }) : null),
-      el("span", { class: "card-place" }, svg(ICON.pin), `${h.city}, ${h.district}`),
-      el("span", { class: "card-tags" },
-        el("span", { class: "chip", text: h.type_label }),
-        h.emergency_24h ? el("span", { class: "chip ok", text: t("er24") }) : null,
-        h.health_insurance ? el("span", { class: "chip ok", text: t("insurance") }) : null),
-      el("span", { class: "card-foot" }, ratingLine(h.rating), el("span", { class: "card-go", "aria-hidden": "true", text: "→" }))))));
+async function loadRanking() {
+  if (!rankState.data || rankState.lang !== S.lang) {
+    try { rankState.data = await api("/api/ranking", { params: { lang: S.lang } }); rankState.lang = S.lang; }
+    catch (e) { if ($("rkBody")) $("rkBody").replaceChildren(el("li", { class: "empty", text: e.message })); return; }
+  }
+  if (!$("rkBody")) return;
+  const d = rankState.data;
+  $("rkStats").replaceChildren(...[[d.stats.hospitals, t("stHospitals")], [d.stats.provinces, t("stProvinces")],
+    [d.stats.emergency_24h, t("stEmergency")], [d.indicators.length, t("stIndicators")]].map(([n, label]) =>
+    el("div", { class: "rk-stat" }, el("b", { text: n }), el("span", { text: label }))));
+  $("rkMethod").replaceChildren(el("h2", { text: t("methodTitle") }), el("p", { text: t("methodIntro") }),
+    el("ul", { class: "rk-weights" }, d.indicators.map((i) => el("li", {},
+      el("span", { class: "rk-w", text: `${i.weight}%` }), el("div", {}, el("b", { text: t(`ind_${i.key}`) }), el("p", { text: t(`desc_${i.key}`, d.min_reviews) }))))),
+    el("p", { class: "note", text: t("methodCaveat") }));
+  renderRanking();
+}
+
+function renderRanking() {
+  const d = rankState.data;
+  if (!d || !$("rkBody")) return;
+  const q = rankState.q.trim().toLowerCase();
+  let rows = d.hospitals.filter((h) =>
+    (!rankState.province || h.province === rankState.province) &&
+    (!rankState.type || h.type_group === rankState.type) &&
+    (!rankState.erOnly || h.emergency_24h) &&
+    (!q || [h.name, h.name_ne, h.city, h.district, h.province].join(" ").toLowerCase().includes(q)));
+  const byRating = (h) => (h.rating && h.rating.count ? h.rating.avg : -1);
+  if (rankState.sort === "az") rows = [...rows].sort((a, b) => hName(a).localeCompare(hName(b)));
+  else if (rankState.sort === "rating") rows = [...rows].sort((a, b) => byRating(b) - byRating(a) || a.rank - b.rank);
+  else if (rankState.sort === "specialties") rows = [...rows].sort((a, b) => b.departments - a.departments || a.rank - b.rank);
+  $("rkCount").textContent = t("showing", rows.length, d.hospitals.length);
+  if (!rows.length) { $("rkBody").replaceChildren(el("li", { class: "empty", text: t("noResults") })); return; }
+  $("rkBody").replaceChildren(...rows.map((h) => el("li", { class: "rk-card" },
+    el("a", { class: "rk-card-link", href: `#/h/${encodeURIComponent(h.id)}` },
+      el("span", { class: "rk-card-head" },
+        el("span", { class: "rk-rank", "aria-label": `${t("colRank")} ${h.tied ? "=" : ""}${h.rank}` }, el("small", { text: "#" }), `${h.tied ? "=" : ""}${h.rank}`),
+        el("span", { class: "rk-overall" }, el("b", { text: h.overall.toFixed(1) }), el("small", { text: t("colOverall") }))),
+      el("span", { class: "rk-name", text: hName(h) }),
+      el("span", { class: "rk-place" }, svg(ICON.pin), `${h.city}, ${h.province}`),
+      el("span", { class: "rk-tags" }, el("span", { class: "chip", text: h.type_label }),
+        h.rating && h.rating.count ? el("span", { class: "stars small", text: `★ ${h.rating.avg} (${h.rating.count})` }) : null),
+      el("span", { class: "rk-inds" }, ["specialties", "emergency", "insurance", "teaching", "rating"].map((k) =>
+        el("span", { class: "rk-ind" }, el("span", { class: "rk-ind-label", text: t(`ind_${k}`) }), scoreBar(h.scores[k])))),
+      el("span", { class: "rk-go", "aria-hidden": "true", text: "→" })))));
 }
 
 // ------------------------------------------------------------------ hospital page
@@ -363,7 +440,7 @@ function viewHelp() {
   const f = S.flow;
   const placeChip = el("button", { class: `place-chip${S.place ? " set" : ""}`, type: "button", onclick: () => openPlace(() => viewHelp()) },
     svg(ICON.pin), S.place ? `${t("place")}: ${placeLabel()}` : t("choosePlace"));
-  const alarm = f.alarm ? alarmBox(f.alarm) : null;
+  const alarm = f.alarm ? alarmBox(f.alarm, f.alarmAnimal) : null;
   const parts = [el("a", { class: "back", href: "#/" }, svg(ICON.back), t("back")), el("div", { class: "center" }, placeChip), alarm];
 
   if (f.step === "idle" || f.step === "recording") {
@@ -395,10 +472,15 @@ function viewHelp() {
   if (startRecordingSoon && f.step === "idle") { startRecordingSoon = false; toggleRecording(); }
 }
 
-function alarmBox(flags) {
+function alarmBox(flags, animal = false) {
   const f = flags[0] || {};
+  const label = S.lang === "ne" ? (f.label_ne || f.label || "") : (f.label_en || f.label || "");
+  if (animal) {  // animal danger signs: go to a vet (102 is the human ambulance)
+    const action = S.lang === "ne" ? (f.action_ne || f.action || "") : (f.action_en || f.action || "");
+    return el("div", { class: "alarm", role: "alert" }, el("div", {}, el("strong", { text: t("vetAlarmTitle") }), el("span", { text: label }), action ? el("span", { text: action }) : null));
+  }
   return el("div", { class: "alarm", role: "alert" },
-    el("div", {}, el("strong", { text: t("emergencyTitle") }), el("span", { text: S.lang === "ne" ? (f.label_ne || f.label || "") : (f.label_en || f.label || "") })),
+    el("div", {}, el("strong", { text: t("emergencyTitle") }), el("span", { text: label })),
     el("a", { href: "tel:102" }, t("call102")));
 }
 
@@ -432,7 +514,9 @@ async function onRecorded() {
     const fd = new FormData();
     fd.append("audio", blob, `voice.${type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm"}`);
     const r = await api("/api/transcribe", { method: "POST", form: fd, auth: true });
-    S.flow = { step: "confirm", text: r.text, alarm: r.safety && r.safety.is_emergency ? r.safety.flags : S.flow.alarm };
+    const hit = r.safety && r.safety.is_emergency;
+    S.flow = { step: "confirm", text: r.text, alarm: hit ? r.safety.flags : S.flow.alarm,
+      alarmAnimal: hit ? r.safety.subject === "animal" : S.flow.alarmAnimal };
   } catch (e) {
     toast(e.message); S.flow = { step: "confirm", typed: true, text: "", alarm: S.flow.alarm };
   }
@@ -455,8 +539,9 @@ async function makeReport(text) {
     location.hash = "#/report";
   } catch (e) {
     clearInterval(adv);
-    const alarm = e.data && e.data.safety && e.data.safety.is_emergency ? e.data.safety.flags : S.flow.alarm;
-    S.flow = { step: "confirm", text, alarm };
+    const hit = e.data && e.data.safety && e.data.safety.is_emergency;
+    S.flow = { step: "confirm", text, alarm: hit ? e.data.safety.flags : S.flow.alarm,
+      alarmAnimal: hit ? e.data.safety.subject === "animal" : S.flow.alarmAnimal };
     viewHelp(); toast(e.message);
   }
 }
@@ -477,6 +562,10 @@ function pickVoice(lang) {
 
 function reportSpeech(r) {
   const top = r.hospitals[0];
+  if (r.kind === "animal") {
+    const steps = r.do_now.map((s, i) => `${i + 1}. ${s}`).join(" ");
+    return [r.urgency_text, r.summary, `${t("doNow")}: ${steps}`, top ? `${t("goToVet")}: ${hName(top)}` : ""].filter(Boolean).join(" ");
+  }
   const steps = r.do_now.map((s, i) => `${i + 1}. ${s}`).join(" ");
   return [r.urgency_text, r.summary, `${t("doNow")}: ${steps}`, `${t("dept")}: ${r.department_label}`, top ? `${t("goTo")}: ${hName(top)}` : ""]
     .filter(Boolean).join(" ");
@@ -517,9 +606,56 @@ function toggleListen() {
 }
 
 // ------------------------------------------------------------------ report
+function reportActions() {
+  return [el("div", { class: "sticky-actions" },
+    el("button", { class: "primary-btn", type: "button", onclick: downloadPdf }, svg(ICON.down), " ", t("downloadPdf")),
+    SHOW_EMAIL ? el("button", { class: "secondary-btn", type: "button", onclick: emailReport }, svg(ICON.mail), " ", t("emailMe")) : null),
+  el("div", { class: "center" }, el("a", { class: "text-btn", href: "#/help", onclick: () => { S.flow = { step: "idle", text: "" }; } }, t("newReport")))];
+}
+
+function viewAnimalReport(r) {
+  const top = r.hospitals[0];
+  const parts = [
+    el("a", { class: "back", href: "#/" }, svg(ICON.back), t("back")),
+    r.urgency === "emergency" && r.safety_flags.length ? alarmBox(r.safety_flags, true) : null,
+    el("h1", { class: "r-title", text: r.title }),
+    el("div", { class: `r-urgency u-${r.urgency}` }, el("b", { text: r.urgency_text }), r.urgency_reason),
+    el("p", { text: r.summary }),
+    SPEECH_OK ? el("div", { class: "listen-row" }, listenButton()) : null,
+    block(t("doNow"), stepsList(r.do_now)),
+    el("section", { class: "block" }, el("h2", { text: t("goToVet") }),
+      top ? el("div", { class: "pick" },
+        el("div", { class: "map-box", style: "border:none;border-radius:0" }, mapFrame(top.map_embed_url, top.name)),
+        el("div", { class: "pick-body" },
+          el("div", { class: "pick-name", text: hName(top) }),
+          el("div", { class: "row-sub", text: `${top.city} · ${top.type_label}${top.distance_km != null ? ` · ${top.distance_km} ${t("km")}` : ""}` }),
+          !top.verified ? el("div", { class: "row-meta" }, el("span", { class: "tag grey", text: t("unverified") })) : null,
+          top.why ? el("p", { text: top.why }) : null,
+          el("div", { class: "actions" },
+            el("a", { class: "primary-btn", href: top.directions_url, target: "_blank", rel: "noopener" }, svg(ICON.nav), t("directions")),
+            top.phone ? el("a", { class: "secondary-btn", href: `tel:${top.phone}` }, t("call")) : null))) : null,
+      r.hospitals.slice(1).map((h) => el("div", { class: "other" },
+        el("div", { class: "other-head" }, el("b", { text: hName(h) }), h.distance_km != null ? el("b", { text: `${h.distance_km} ${t("km")}` }) : null),
+        h.why ? el("p", { style: "margin:2px 0", text: h.why }) : null,
+        el("a", { href: h.directions_url, target: "_blank", rel: "noopener" }, t("directions")))),
+      r.district_office ? el("div", { class: "dept-box", style: "margin-top:12px" }, el("b", { text: t("vetOffice") }), el("p", { text: r.district_office.name }),
+        el("a", { href: r.district_office.search_url, target: "_blank", rel: "noopener" }, t("googleMaps"))) : null,
+      el("a", { class: "secondary-btn wide", style: "margin-top:12px", href: r.vet_search_url, target: "_blank", rel: "noopener" }, svg(ICON.pin), t("findVets"))),
+  ];
+  if (r.travel_tip) parts.push(el("p", { class: "note", style: "font-size:17px;color:var(--ink)", text: r.travel_tip }));
+  parts.push(block(t("careAtHome"), plainList(r.care_at_home)));
+  if (r.food_tips.length) parts.push(block(t("foodTips"), plainList(r.food_tips)));
+  parts.push(block(t("tellVet"), plainList(r.tell_the_vet)), block(t("vetWarning"), plainList(r.warning_signs)));
+  parts.push(block(t("youSaid"), el("blockquote", { class: "said", text: r.transcript })));
+  parts.push(el("p", { class: "disclaimer", text: r.disclaimer }), reportActions());
+  fill($("view"), parts);
+  if (Voice.autoRead) { Voice.autoRead = false; toggleListen(); }
+}
+
 function viewReport() {
   const r = S.report;
   if (!r) { location.hash = "#/help"; return; }
+  if (r.kind === "animal") { viewAnimalReport(r); return; }
   const top = r.hospitals[0];
   const v = $("view");
   const parts = [
@@ -563,10 +699,7 @@ function viewReport() {
   if (r.schemes && r.schemes.length) parts.push(block(t("schemes"), r.schemes.map((s) => el("p", {}, el("b", { text: `${s.name}. ` }), s.summary, el("br"), el("span", { class: "note", text: s.how })))));
   parts.push(block(t("youSaid"), el("blockquote", { class: "said", text: r.transcript })));
   parts.push(el("p", { class: "disclaimer", text: r.disclaimer }));
-  parts.push(el("div", { class: "sticky-actions" },
-    el("button", { class: "primary-btn", type: "button", onclick: downloadPdf }, svg(ICON.down), " ", t("downloadPdf")),
-    el("button", { class: "secondary-btn", type: "button", onclick: shareReport }, t("share"))));
-  parts.push(el("div", { class: "center" }, el("a", { class: "text-btn", href: "#/help", onclick: () => { S.flow = { step: "idle", text: "" }; } }, t("newReport"))));
+  parts.push(reportActions());
   fill(v, parts);
   if (Voice.autoRead) { Voice.autoRead = false; toggleListen(); }
 }
@@ -583,11 +716,14 @@ async function downloadPdf() {
   } catch (e) { toast(e.message); }
 }
 
-async function shareReport() {
-  const r = S.report; const h = r.hospitals[0];
-  const text = [r.title, r.urgency_text, `${t("dept")}: ${r.department_label}`, h ? `${t("goTo")}: ${hName(h)} — ${h.directions_url}` : "", r.disclaimer].filter(Boolean).join("\n");
-  if (navigator.share) { try { await navigator.share({ title: r.title, text }); return; } catch { /* cancelled */ } }
-  try { await navigator.clipboard.writeText(text); toast("✓"); } catch { toast(text.slice(0, 120)); }
+async function emailReport() {
+  if (!S.cfg.email_enabled) { toast(t("emailOff")); return; }
+  if (!S.user.email) { saveEmail.then = emailReport; openAccount(t("addEmailFirst")); return; }
+  toast(t("emailing"));
+  try {
+    const r = await api("/api/report/email", { method: "POST", auth: true, body: S.report });
+    toast(r.delivered ? t("emailSent", r.sent_to) : t("emailSavedOnly"));
+  } catch (e) { toast(e.message); }
 }
 
 // ------------------------------------------------------------------ router
@@ -596,6 +732,8 @@ function route() {
   const m = hash.match(/^#\/h\/(.+)$/);
   stopSpeaking(); // leaving or re-rendering a page stops the spoken report
   window.scrollTo(0, 0);
+  const home = !m && !hash.startsWith("#/help") && !hash.startsWith("#/report");
+  $("view").classList.toggle("wide", home);
   if (m) viewHospital(decodeURIComponent(m[1]));
   else if (hash.startsWith("#/help")) viewHelp();
   else if (hash.startsWith("#/report")) { if (!S.user) { location.hash = "#/"; return; } viewReport(); }
@@ -612,14 +750,15 @@ async function start() {
 
   $("langBtn").addEventListener("click", () => { S.lang = S.lang === "ne" ? "en" : "ne"; store.set("ss_lang", S.lang); renderHeader(); route(); });
   $("loginBtn").addEventListener("click", () => openLogin());
-  $("avatarBtn").addEventListener("click", () => {
-    $("accountName").textContent = S.user.name; $("logoutBtn").textContent = t("logout"); $("accountClose").textContent = t("close");
-    $("accountSheet").showModal();
-  });
+  $("avatarBtn").addEventListener("click", () => openAccount());
+  $("accountSave").addEventListener("click", saveEmail);
+  $("accountEmail").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveEmail(); } });
+  $("accountSheet").addEventListener("close", () => { saveEmail.then = null; });
   $("logoutBtn").addEventListener("click", logout);
   $("googleBtn").addEventListener("click", googleLogin);
   $("devGo").addEventListener("click", devLogin);
-  $("devName").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); devLogin(); } });
+  $("devName").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("devEmail").focus(); } });
+  $("devEmail").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); devLogin(); } });
   $("loginSheet").addEventListener("close", () => { if (!S.user) afterLogin = null; });
   $("gpsBtn").addEventListener("click", async () => {
     try { setPlace(await getGps()); $("placeSheet").close(); } catch { toast(t("gpsFail")); }

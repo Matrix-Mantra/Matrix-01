@@ -36,6 +36,8 @@
       <div id="devLogin" hidden>
         <label class="field-label" for="devName" id="devNameLabel"></label>
         <input class="input" id="devName" maxlength="40" autocomplete="name">
+        <label class="field-label" for="devEmail" id="devEmailLabel"></label>
+        <input class="input" id="devEmail" type="email" maxlength="254" autocomplete="email" inputmode="email">
         <button class="primary-btn wide" id="devGo" type="button"></button>
         <p class="muted small" id="devNote"></p>
       </div>
@@ -48,6 +50,10 @@
   <dialog id="accountSheet" class="sheet">
     <form method="dialog" class="sheet-body">
       <h2 id="accountName"></h2>
+      <label class="field-label" for="accountEmail" id="accountEmailLabel"></label>
+      <input class="input" id="accountEmail" type="email" maxlength="254" autocomplete="email" inputmode="email">
+      <p class="muted small" id="accountNote"></p>
+      <button class="primary-btn wide" id="accountSave" type="button"></button>
       <button class="secondary-btn wide" id="logoutBtn" type="button"></button>
       <button class="text-btn" value="cancel" id="accountClose"></button>
     </form>
