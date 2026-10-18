@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from . import ai, hospitals, safety, vets
-from .store import get_store
+from .store import summaries_or_empty
 
 URGENCY_TEXT = {
     "en": {"emergency": "Emergency: go now", "urgent": "See a doctor today", "soon": "See a doctor within a few days",
@@ -80,7 +80,7 @@ def build_report(*, text: str, lang: str, lat: float | None = None, lng: float |
 
     origin = hospitals.origin_from(lat, lng, district) or hospitals.origin_from(district=tri.district_mentioned)
     cand = hospitals.candidates(department, origin, emergency=is_emergency, lang=lang)
-    ratings = get_store().summaries()
+    ratings = summaries_or_empty()
     for h in cand["hospitals"] + ([cand["nearest_general"]] if cand["nearest_general"] else []):
         h["rating"] = ratings.get(h["id"])
 
