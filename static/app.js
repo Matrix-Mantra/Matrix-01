@@ -119,7 +119,7 @@ async function initAuth() {
         if (u && afterLogin) { const f = afterLogin; afterLogin = null; f(); }
       });
     });
-    authMod.getRedirectResult(auth).catch(() => {});
+    authMod.getRedirectResult(auth).then((r) => { if (r && r.user) celebrateLogin(r.user.displayName || r.user.email || ""); }).catch(() => {});
   } else {
     const name = store.get("ss_dev_name");
     S.user = name ? { name, email: "" } : null;
@@ -157,7 +157,10 @@ function requireLogin(reason, then) {
 async function googleLogin() {
   const { auth, GoogleAuthProvider, signInWithPopup, signInWithRedirect } = firebaseAuth;
   const provider = new GoogleAuthProvider();
-  try { await signInWithPopup(auth, provider); $("loginSheet").close(); }
+  try {
+    const cred = await signInWithPopup(auth, provider);
+    $("loginSheet").close(); celebrateLogin(cred.user.displayName || cred.user.email || "");
+  }
   catch (e) {
     if (e && (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment")) {
       await signInWithRedirect(auth, provider);
@@ -181,8 +184,19 @@ async function devLogin() {
   try { await syncLogin(email); }
   catch (e) { S.user = null; $("loginError").textContent = e.message; $("loginError").hidden = false; return; }
   store.set("ss_dev_name", name);
-  $("loginSheet").close(); renderHeader();
+  $("loginSheet").close(); renderHeader(); celebrateLogin(name);
   if (afterLogin) { const f = afterLogin; afterLogin = null; f(); }
+}
+
+// Green tick after an explicit sign-in (not when a saved session is restored on page load).
+function celebrateLogin(name) {
+  document.querySelectorAll(".login-ok").forEach((n) => n.remove());
+  const tick = el("span", { class: "login-ok-tick", "aria-hidden": "true" });
+  tick.innerHTML = '<svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="24"/><path d="M15 27l7 7 15-15"/></svg>';
+  const box = el("div", { class: "login-ok", role: "status" }, tick,
+    el("b", { text: t("loggedIn") }), name ? el("span", { class: "login-ok-name", text: name }) : null);
+  document.body.append(box);
+  setTimeout(() => box.remove(), 2000);
 }
 
 function openAccount(note) {
@@ -421,6 +435,7 @@ async function renderReviews(h, box) {
     if (!rating) { toast(t("pickStars")); return; }
     try {
       await api(`/api/hospitals/${encodeURIComponent(h.id)}/reviews`, { method: "POST", auth: true, body: { rating, comment: ta.value } });
+      rankState.data = null;  // home cards reload with the new rating
       toast(t("reviewSaved")); viewHospital(h.id);
     } catch (err) { toast(err.message); }
   } },
@@ -429,7 +444,8 @@ async function renderReviews(h, box) {
     el("p", { class: "note", text: t("reviewNote") }),
     el("div", { class: "row-end" },
       mine ? el("button", { class: "text-btn", type: "button", onclick: async () => {
-        await api(`/api/hospitals/${encodeURIComponent(h.id)}/reviews/mine`, { method: "DELETE", auth: true }); viewHospital(h.id);
+        await api(`/api/hospitals/${encodeURIComponent(h.id)}/reviews/mine`, { method: "DELETE", auth: true });
+        rankState.data = null; viewHospital(h.id);
       } }, t("deleteReview")) : null,
       el("button", { class: "primary-btn", type: "submit" }, t("postReview"))));
   formSlot.append(form);
