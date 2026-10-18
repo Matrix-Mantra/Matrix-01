@@ -16,6 +16,11 @@
       <span id="brandName">Matrix</span>
     </a>
     <div class="top-actions">
+      <!-- always one tap away, on every page, no login -->
+      <a class="sos-btn" id="sosBtn" href="tel:102" aria-label="आकस्मिक: १०२ मा फोन गर्नुहोस्">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1z"/></svg>
+        <span id="sosLabel">१०२</span>
+      </a>
       <button class="link-btn" id="langBtn" type="button">English</button>
       <button class="pill-btn" id="loginBtn" type="button">लगइन</button>
       <button class="avatar" id="avatarBtn" type="button" hidden aria-haspopup="dialog"></button>
@@ -47,7 +52,7 @@
   </dialog>
 
   <!-- Account -->
-  <dialog id="accountSheet" class="sheet">
+  <dialog id="accountSheet" class="sheet" aria-labelledby="accountName">
     <form method="dialog" class="sheet-body">
       <h2 id="accountName"></h2>
       <label class="field-label" for="accountEmail" id="accountEmailLabel"></label>
