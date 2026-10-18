@@ -41,10 +41,12 @@ const ICON = {
 
 function fill(node, parts) { node.replaceChildren(...parts.flat(Infinity).filter((x) => x != null && x !== false)); }
 
-function toast(msg) {
+function toast(msg, ms = 4000) {
   const n = $("toast"); n.textContent = msg; n.hidden = false;
-  clearTimeout(toast.t); toast.t = setTimeout(() => (n.hidden = true), 2600);
+  clearTimeout(toast.t); toast.t = setTimeout(() => (n.hidden = true), ms);
 }
+const srOnly = (text) => el("span", { class: "sr-only", text });
+const newTab = () => srOnly(` ${t("newTab")}`);
 
 // Report by email is hidden until an email service is connected (set to true to show the "Email me" button).
 const SHOW_EMAIL = false;
@@ -80,7 +82,10 @@ function placeLabel() {
 }
 
 // ------------------------------------------------------------------ api
-async function api(path, { method = "GET", body, form, params, auth = false, raw = false } = {}) {
+// AI calls (voice, report, audio, PDF) are slow; everything else should answer within seconds.
+const SLOW = 90000;
+
+async function api(path, { method = "GET", body, form, params, auth = false, raw = false, timeout = 20000 } = {}) {
   const url = new URL(path, location.origin);
   for (const [k, v] of Object.entries(params || {})) if (v != null && v !== "") url.searchParams.set(k, v);
   const headers = {};
@@ -88,7 +93,17 @@ async function api(path, { method = "GET", body, form, params, auth = false, raw
   let payload;
   if (form) payload = form;
   else if (body !== undefined) { headers["Content-Type"] = "application/json"; payload = JSON.stringify(body); }
-  const res = await fetch(url, { method, headers, body: payload });
+  let res;
+  for (let attempt = 0; ; attempt += 1) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeout);
+    try { res = await fetch(url, { method, headers, body: payload, signal: ctl.signal }); break; }
+    catch (err) {
+      // reads retry once on a dropped connection; timeouts and failed writes are reported
+      if (method === "GET" && attempt === 0 && err.name !== "AbortError") continue;
+      throw new Error(err.name === "AbortError" ? t("slowNet") : t("netError"));
+    } finally { clearTimeout(timer); }
+  }
   if (raw && res.ok) return res;
   let data = null; try { data = await res.json(); } catch { /* not JSON */ }
   if (!res.ok) {
@@ -145,9 +160,12 @@ function openLogin(reason) {
   $("devNameLabel").textContent = t("devName"); $("devGo").textContent = t("devGo"); $("devNote").textContent = t("devNote");
   $("devEmailLabel").textContent = t("devEmail");
   $("loginCancel").textContent = t("cancel");
-  $("loginSheet").showModal();
+  showSheet("loginSheet");
   if (!fb) $("devName").focus();
 }
+
+// Dialogs hand focus back to whatever opened them (see the "close" listeners in start()).
+function showSheet(id) { const d = $(id); d.opener = document.activeElement; d.showModal(); }
 
 function requireLogin(reason, then) {
   if (S.user) { then(); return; }
@@ -165,10 +183,8 @@ async function googleLogin() {
     if (e && (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment")) {
       await signInWithRedirect(auth, provider);
     } else if (!(e && e.code === "auth/popup-closed-by-user")) {
-      console.error("Google sign-in failed", e);
-      // the Firebase code (e.g. auth/unauthorized-domain) tells us what to fix
-      $("loginError").textContent = `${t("loginFailed")}${e && e.code ? ` (${e.code})` : ""}`;
-      $("loginError").hidden = false;
+      console.error("Google sign-in failed", e);  // the Firebase code (e.g. auth/unauthorized-domain) is in the console
+      $("loginError").textContent = t("loginFailed"); $("loginError").hidden = false;
     }
   }
 }
@@ -205,13 +221,17 @@ function openAccount(note) {
   $("accountEmail").placeholder = t("emailPh"); $("accountSave").textContent = t("emailSave");
   $("accountNote").textContent = note || t("emailWhy");
   $("logoutBtn").textContent = t("logout"); $("accountClose").textContent = t("close");
-  $("accountSheet").showModal();
+  $("accountEmail").removeAttribute("aria-invalid");
+  showSheet("accountSheet");
   if (note) $("accountEmail").focus();
 }
 
 async function saveEmail() {
   const email = $("accountEmail").value.trim();
-  if (!EMAIL_RE.test(email)) { toast(t("emailNeeded")); $("accountEmail").focus(); return; }
+  if (!EMAIL_RE.test(email)) {
+    $("accountNote").textContent = t("emailNeeded"); $("accountEmail").setAttribute("aria-invalid", "true");
+    $("accountEmail").focus(); return;
+  }
   try {
     const p = await api("/api/me", { method: "PUT", auth: true, body: { email } });
     S.user.email = p.email; toast(t("emailSaved")); $("accountSheet").close();
@@ -231,6 +251,7 @@ function renderHeader() {
   $("brandName").textContent = t("brand");
   $("langBtn").textContent = t("other");
   $("loginBtn").textContent = t("login");
+  $("sosLabel").textContent = t("call102Short"); $("sosBtn").setAttribute("aria-label", t("emergencyCall"));
   $("loginBtn").hidden = Boolean(S.user);
   $("avatarBtn").hidden = !S.user;
   if (S.user) { $("avatarBtn").textContent = (S.user.name || "?").trim().charAt(0).toUpperCase(); $("avatarBtn").setAttribute("aria-label", S.user.name); }
@@ -242,7 +263,7 @@ function openPlace(onDone) {
   $("districtLabel").textContent = t("orDistrict"); $("placeCancel").textContent = t("cancel"); $("placeSave").textContent = t("save");
   const sel = $("districtSel"); sel.replaceChildren(el("option", { value: "", text: "—" }));
   for (const d of S.cfg.districts) sel.append(el("option", { value: d, text: d, selected: S.place && S.place.district === d }));
-  openPlace.done = onDone; $("placeSheet").showModal();
+  openPlace.done = onDone; showSheet("placeSheet");
 }
 function setPlace(p) {
   S.place = p;
@@ -263,67 +284,99 @@ function getGps() {
 
 // ------------------------------------------------------------------ shared bits
 function starsText(r) { return r && r.count ? `★ ${r.avg}` : ""; }
+// "★ 4.5" is read out as "4.5 out of 5 stars"
+const starsBadge = (avg) => {
+  const a = Number(avg).toFixed(1);  // JSON turns 5.0 into 5; always show one decimal
+  return el("span", { class: "stars", role: "img", "aria-label": t("outOf5", a) }, `★ ${a}`);
+};
 function ratingLine(r) {
-  return r && r.count ? el("span", { class: "stars" }, `★ ${r.avg}`, el("span", { class: "muted", text: ` (${t("reviews", r.count)})` }))
+  return r && r.count ? el("span", { class: "rating-line" }, starsBadge(r.avg), el("span", { class: "muted", text: ` (${t("reviews", r.count)})` }))
     : el("span", { class: "muted", text: t("noReviews") });
 }
-function mapFrame(src, title) {
-  return el("iframe", { src, title, loading: "lazy", referrerpolicy: "no-referrer-when-downgrade", allowfullscreen: true });
+function mapFrame(src, name) {
+  return el("iframe", { src, title: t("mapOf", name), loading: "lazy", referrerpolicy: "no-referrer-when-downgrade", allowfullscreen: true });
 }
 function stepsList(items) { return el("ol", { class: "steps" }, items.map((s) => el("li", { text: s }))); }
 function plainList(items) { return el("ul", { class: "plain" }, items.map((s) => el("li", { text: s }))); }
 function block(title, ...content) { return el("section", { class: "block" }, el("h2", { text: title }), ...content); }
 
 // ------------------------------------------------------------------ home: QS-style ranking
-let rankState = { q: "", province: "", type: "", erOnly: false, sort: "rank", data: null, lang: null };
+const PAGE = 24;  // cards rendered at a time; "show more" adds the next page
+let rankState = { q: "", province: "", type: "", erOnly: false, sort: "rank", data: null, lang: null, shown: PAGE };
 
 function scoreBar(v) {
-  if (v == null) return el("span", { class: "rk-pending", text: t("pending") });
   return el("span", { class: "rk-score" }, el("span", { class: "rk-bar", "aria-hidden": "true" }, el("i", { style: `width:${v}%` })), el("b", { text: Math.round(v) }));
+}
+
+// Patient rating on a card: real stars as soon as there is a review; the 0-100 score only counts from min_reviews.
+function ratingValue(h, minReviews) {
+  if (!h.rating || !h.rating.count) return el("span", { class: "muted", text: t("noReviews") });
+  return el("span", { class: "rk-rate" }, starsBadge(h.rating.avg), el("span", { class: "muted", text: ` (${h.rating.count})` }),
+    h.scores.rating == null ? el("small", { class: "rk-rate-note", text: t("ratingNotCounted", minReviews) }) : null);
+}
+
+function startHelp(recordNow) {
+  requireLogin(t("loginWhyHelp"), () => {
+    S.flow = recordNow ? { step: "idle", text: "" } : { step: "confirm", typed: true, text: "" };
+    startRecordingSoon = recordNow;
+    if (location.hash === "#/help") viewHelp(); else location.hash = "#/help";
+  });
 }
 
 function viewHome() {
   const v = $("view");
-  const mic = el("button", { class: "mic mic-sm", type: "button", "aria-label": t("startSpeaking"),
-    onclick: () => requireLogin(t("loginWhyHelp"), () => { location.hash = "#/help"; startRecordingSoon = true; }) }, svg(ICON.mic));
-  const cta = el("section", { class: "rk-cta" }, mic,
-    el("div", {}, el("b", { text: t("ctaTitle") }), el("p", { text: `${t("ctaSub")} ${t("animalsToo")}` })),
-    el("button", { class: "primary-btn", type: "button",
-      onclick: () => requireLogin(t("loginWhyHelp"), () => { location.hash = "#/help"; }) }, t("ctaBtn")));
+  // The main job first: describe the problem and get pointed to the right hospital.
+  const help = el("section", { class: "help home-help" },
+    el("h1", { text: t("helpTitle") }),
+    el("p", { text: `${t("ctaSub")} ${t("animalsToo")}` }),
+    el("button", { class: "mic", type: "button", "aria-label": t("startSpeaking"), onclick: () => startHelp(true) }, svg(ICON.mic)),
+    el("div", { class: "mic-label", text: t("startSpeaking") }),
+    el("p", { class: "note privacy", text: t("voicePrivacy") }),
+    el("button", { class: "text-btn", type: "button", onclick: () => startHelp(false) }, t("typeInstead")));
 
   const stats = el("div", { class: "rk-stats", id: "rkStats" });
-  const sel = (key, opts) => el("select", { class: "input", "aria-label": opts[0][1], onchange: (e) => { rankState[key] = e.target.value; renderRanking(); } },
-    opts.map(([val, label]) => el("option", { value: val, text: label, selected: rankState[key] === val })));
+  const refilter = () => { rankState.shown = PAGE; renderRanking(); };
+  const sel = (key, label, opts) => el("select", { class: "input", "aria-label": label, onchange: (e) => { rankState[key] = e.target.value; refilter(); } },
+    opts.map(([val, text]) => el("option", { value: val, text, selected: rankState[key] === val })));
   const q = el("input", { class: "input rk-search", type: "search", value: rankState.q, placeholder: t("searchPh"), "aria-label": t("searchPh"),
-    oninput: (e) => { rankState.q = e.target.value; renderRanking(); } });
+    oninput: (e) => { rankState.q = e.target.value; refilter(); } });
   const provinces = ["Koshi", "Madhesh", "Bagmati", "Gandaki", "Lumbini", "Karnali", "Sudurpashchim"];
   const er = el("label", { class: "rk-check" }, el("input", { type: "checkbox", checked: rankState.erOnly,
-    onchange: (e) => { rankState.erOnly = e.target.checked; renderRanking(); } }), t("erOnly"));
+    onchange: (e) => { rankState.erOnly = e.target.checked; refilter(); } }), t("erOnly"));
   const controls = el("div", { class: "rk-controls" }, q,
-    sel("province", [["", t("allProvinces")], ...provinces.map((p) => [p, p])]),
-    sel("type", [["", t("allTypes")], ["government", t("typeGovernment")], ["private", t("typePrivate")], ["community", t("typeCommunity")], ["teaching", t("typeTeaching")]]),
-    sel("sort", [["rank", t("sortRank")], ["az", t("sortAZ")], ["rating", t("sortRating")], ["specialties", t("sortSpecialties")]]),
+    sel("province", t("filterProvince"), [["", t("allProvinces")], ...provinces.map((p) => [p, p])]),
+    sel("type", t("filterType"), [["", t("allTypes")], ["government", t("typeGovernment")], ["private", t("typePrivate")], ["community", t("typeCommunity")], ["teaching", t("typeTeaching")]]),
+    sel("sort", t("sortBy"), [["rank", t("sortRank")], ["az", t("sortAZ")], ["rating", t("sortRating")], ["specialties", t("sortSpecialties")]]),
     er);
 
   fill(v, [
+    help,
     el("section", { class: "rk-hero" },
       el("p", { class: "rk-eyebrow", text: t("rkEyebrow") }),
-      el("h1", { text: t("rkTitle") }),
-      el("p", { class: "rk-sub", text: t("rkSub") }), stats),
-    cta,
+      el("h2", { text: t("rkTitle") }),
+      el("p", { class: "rk-sub", text: t("rkSub") }),
+      el("p", { class: "rk-caveat", text: t("rkCaveatShort") }), stats),
     el("section", { class: "rk-board" }, controls,
       el("p", { class: "rk-count", id: "rkCount", "aria-live": "polite" }),
-      el("ol", { class: "rk-cards", id: "rkBody" }, el("li", { class: "empty", text: "…" }))),
+      el("ol", { class: "rk-cards", id: "rkBody" }, el("li", { class: "empty", text: "…" })),
+      el("div", { class: "center", id: "rkMore" })),
     el("section", { class: "rk-method", id: "rkMethod" }),
     el("p", { class: "disclaimer", text: t("disclaimer") }),
-    S.cfg.osm_attribution ? el("p", { class: "disclaimer" }, "Hospital data includes © ", el("a", { href: "https://www.openstreetmap.org/copyright", target: "_blank", rel: "noopener" }, "OpenStreetMap"), " contributors") : null]);
+    S.cfg.osm_attribution ? el("p", { class: "disclaimer" }, t("osmPre"), el("a", { href: "https://www.openstreetmap.org/copyright", target: "_blank", rel: "noopener" }, "OpenStreetMap", newTab()), t("osmPost")) : null]);
   loadRanking();
 }
 
 async function loadRanking() {
   if (!rankState.data || rankState.lang !== S.lang) {
     try { rankState.data = await api("/api/ranking", { params: { lang: S.lang } }); rankState.lang = S.lang; }
-    catch (e) { if ($("rkBody")) $("rkBody").replaceChildren(el("li", { class: "empty", text: e.message })); return; }
+    catch (e) {
+      if ($("rkBody")) {
+        $("rkStats").hidden = true;
+        $("rkBody").replaceChildren(el("li", { class: "empty" }, el("p", { text: e.message }),
+          el("button", { class: "secondary-btn", type: "button", onclick: () => { $("rkStats").hidden = false; loadRanking(); } }, t("retry"))));
+      }
+      return;
+    }
   }
   if (!$("rkBody")) return;
   const d = rankState.data;
@@ -351,19 +404,27 @@ function renderRanking() {
   else if (rankState.sort === "rating") rows = [...rows].sort((a, b) => byRating(b) - byRating(a) || a.rank - b.rank);
   else if (rankState.sort === "specialties") rows = [...rows].sort((a, b) => b.departments - a.departments || a.rank - b.rank);
   $("rkCount").textContent = t("showing", rows.length, d.hospitals.length);
+  $("rkMore").replaceChildren();
   if (!rows.length) { $("rkBody").replaceChildren(el("li", { class: "empty", text: t("noResults") })); return; }
-  $("rkBody").replaceChildren(...rows.map((h) => el("li", { class: "rk-card" },
-    el("a", { class: "rk-card-link", href: `#/h/${encodeURIComponent(h.id)}` },
-      el("span", { class: "rk-card-head" },
-        el("span", { class: "rk-rank", "aria-label": `${t("colRank")} ${h.tied ? "=" : ""}${h.rank}` }, el("small", { text: "#" }), `${h.tied ? "=" : ""}${h.rank}`),
-        el("span", { class: "rk-overall" }, el("b", { text: h.overall.toFixed(1) }), el("small", { text: t("colOverall") }))),
-      el("span", { class: "rk-name", text: hName(h) }),
-      el("span", { class: "rk-place" }, svg(ICON.pin), `${h.city}, ${h.province}`),
-      el("span", { class: "rk-tags" }, el("span", { class: "chip", text: h.type_label }),
-        h.rating && h.rating.count ? el("span", { class: "stars small", text: `★ ${h.rating.avg} (${h.rating.count})` }) : null),
-      el("span", { class: "rk-inds" }, ["specialties", "emergency", "insurance", "teaching", "rating"].map((k) =>
-        el("span", { class: "rk-ind" }, el("span", { class: "rk-ind-label", text: t(`ind_${k}`) }), scoreBar(h.scores[k])))),
-      el("span", { class: "rk-go", "aria-hidden": "true", text: "→" })))));
+  // Only the hospital name is a link (short, clear name for screen readers); CSS stretches it over the whole card.
+  $("rkBody").replaceChildren(...rows.slice(0, rankState.shown).map((h) => el("li", { class: "rk-card" },
+    el("div", { class: "rk-card-head" },
+      el("span", { class: "rk-rank" }, srOnly(`${t("colRank")} `), el("small", { "aria-hidden": "true", text: "#" }), `${h.tied ? "=" : ""}${h.rank}`),
+      el("span", { class: "rk-overall" }, el("b", { text: h.overall.toFixed(1) }), el("small", { text: t("colOverall") }))),
+    el("a", { class: "rk-name", href: `#/h/${encodeURIComponent(h.id)}` }, hName(h)),
+    el("span", { class: "rk-place" }, svg(ICON.pin), `${h.city}, ${h.province}`),
+    el("span", { class: "rk-tags" }, el("span", { class: "chip", text: h.type_label }),
+      h.emergency_24h ? el("span", { class: "chip ok", text: t("er24") }) : null,
+      h.health_insurance ? el("span", { class: "chip", text: t("insurance") }) : null),
+    el("div", { class: "rk-inds" }, ["specialties", "emergency", "insurance", "teaching"].map((k) =>
+      el("div", { class: "rk-ind" }, el("span", { class: "rk-ind-label", text: t(`ind_${k}`) }), scoreBar(h.scores[k]))),
+      el("div", { class: "rk-ind" }, el("span", { class: "rk-ind-label", text: t("ind_rating") }), ratingValue(h, d.min_reviews))),
+    el("span", { class: "rk-go", "aria-hidden": "true", text: "→" }))));
+  const left = rows.length - rankState.shown;
+  if (left > 0) {
+    $("rkMore").append(el("button", { class: "secondary-btn", type: "button", onclick: () => { rankState.shown += PAGE; renderRanking(); } },
+      t("showMore", Math.min(left, PAGE))));
+  }
 }
 
 // ------------------------------------------------------------------ hospital page
@@ -372,7 +433,12 @@ async function viewHospital(id) {
   v.replaceChildren(el("p", { class: "empty", text: "…" }));
   let h;
   try { h = await api(`/api/hospitals/${encodeURIComponent(id)}`, { params: { lang: S.lang, ...(S.place && S.place.lat != null ? { lat: S.place.lat, lng: S.place.lng } : {}) } }); }
-  catch (e) { v.replaceChildren(el("a", { class: "back", href: "#/" }, svg(ICON.back), t("back")), el("p", { class: "empty", text: e.message })); return; }
+  catch (e) {
+    v.replaceChildren(el("a", { class: "back", href: "#/" }, svg(ICON.back), t("back")),
+      el("div", { class: "empty" }, el("p", { text: e.message }),
+        e.status === 404 ? null : el("button", { class: "secondary-btn", type: "button", onclick: () => viewHospital(id) }, t("retry"))));
+    return;
+  }
 
   const frame = mapFrame(h.map_embed_url, h.name);
   const segBtn = (label, src, on) => el("button", { type: "button", "aria-pressed": String(on), onclick: (e) => {
@@ -390,16 +456,17 @@ async function viewHospital(id) {
       h.health_insurance ? el("span", { class: "tag", text: t("insurance") }) : null,
       !h.verified ? el("span", { class: "tag grey", text: t("unverified") }) : null),
     el("div", { class: "actions" },
-      el("a", { class: "primary-btn", href: h.directions_url, target: "_blank", rel: "noopener" }, svg(ICON.nav), t("directions")),
+      el("a", { class: "primary-btn", href: h.directions_url, target: "_blank", rel: "noopener" }, svg(ICON.nav), t("directions"), newTab()),
       h.phone ? el("a", { class: "secondary-btn", href: `tel:${h.phone}` }, t("call"))
-        : el("a", { class: "secondary-btn", href: h.google_maps_url, target: "_blank", rel: "noopener" }, t("googleMaps"))),
+        : el("a", { class: "secondary-btn", href: h.google_maps_url, target: "_blank", rel: "noopener" }, t("googleMaps"), newTab())),
+    el("p", { class: "note call-first", text: t("callFirst") }),
     el("div", { class: "map-box" }, el("div", { class: "seg" }, segBtn(t("mapRoad"), h.map_embed_url, true), segBtn(t("mapCampus"), h.inside.satellite_embed_url, false)), frame),
     h.department_labels.length ? block(t("departments"), el("div", { class: "chips" }, h.department_labels.map((d) => el("span", { class: "chip", text: d.label })))) : null,
     block(t("billing"), stepsList(h.billing.steps),
       h.billing.insurance_steps.length ? [el("h3", { text: t("withInsurance") }), stepsList(h.billing.insurance_steps)] : null,
       h.billing.hospital_notes ? el("p", { text: h.billing.hospital_notes }) : null,
       el("p", { class: "note", text: h.billing.help }), el("p", { class: "note", text: t("generalNote") })),
-    block(t("inside"), h.inside.campus_map_url ? el("img", { src: h.inside.campus_map_url, alt: t("inside"), style: "max-width:100%;border-radius:12px" }) : null,
+    block(t("inside"), h.inside.campus_map_url ? el("img", { class: "campus-map", src: h.inside.campus_map_url, alt: t("campusAlt", hName(h)) }) : null,
       stepsList(h.inside.steps)),
     el("section", { class: "block" }, el("h2", { text: t("reviewsTitle") }), reviewsBox),
   ]);
@@ -408,11 +475,13 @@ async function viewHospital(id) {
 
 async function renderReviews(h, box) {
   const head = h.rating && h.rating.count
-    ? el("div", { class: "rating-big" }, el("b", { text: h.rating.avg }), el("span", { class: "stars", text: "★".repeat(Math.round(h.rating.avg)) }), el("span", { class: "muted", text: t("reviews", h.rating.count) }))
+    ? el("div", { class: "rating-big" }, el("b", { "aria-hidden": "true", text: h.rating.avg }),
+      el("span", { class: "stars", role: "img", "aria-label": t("outOf5", h.rating.avg), text: "★".repeat(Math.round(h.rating.avg)) }),
+      el("span", { class: "muted", text: t("reviews", h.rating.count) }))
     : el("p", { class: "muted", text: t("noReviews") });
   const formSlot = el("div");
   const list = h.reviews.map((r) => el("div", { class: "review" },
-    el("div", { class: "review-head" }, el("span", { class: "stars", text: "★".repeat(r.rating) + "☆".repeat(5 - r.rating), "aria-label": t("stars", r.rating) }),
+    el("div", { class: "review-head" }, el("span", { class: "stars", role: "img", "aria-label": t("outOf5", r.rating), text: "★".repeat(r.rating) + "☆".repeat(5 - r.rating) }),
       el("span", { class: "muted", text: `${r.author} · ${new Date(r.updated_at * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` })),
     r.comment ? el("p", { text: r.comment }) : null));
   box.replaceChildren(head, formSlot, ...list);
@@ -424,11 +493,20 @@ async function renderReviews(h, box) {
   let mine = null;
   try { mine = (await api(`/api/hospitals/${encodeURIComponent(h.id)}/my-review`, { auth: true })).review; } catch { /* ignore */ }
   let rating = mine ? mine.rating : 0;
-  const starBtns = [1, 2, 3, 4, 5].map((n) => el("button", { type: "button", "aria-label": t("stars", n), "aria-pressed": "false",
-    onclick: () => { rating = n; paint(); } }, "★"));
-  const paint = () => starBtns.forEach((b, i) => { b.classList.toggle("on", i < rating); b.setAttribute("aria-pressed", String(i + 1 === rating)); });
+  // Star picker is a radio group: one tab stop, arrow keys change the rating.
+  const pick = (n) => { rating = Math.min(5, Math.max(1, n)); paint(); starBtns[rating - 1].focus(); };
+  const starBtns = [1, 2, 3, 4, 5].map((n) => el("button", { type: "button", role: "radio", "aria-label": t("stars", n),
+    onclick: () => pick(n),
+    onkeydown: (e) => {
+      const step = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[e.key];
+      if (step) { e.preventDefault(); pick((rating || n) + step); }
+    } }, "★"));
+  const paint = () => starBtns.forEach((b, i) => {
+    b.classList.toggle("on", i < rating); b.setAttribute("aria-checked", String(i + 1 === rating));
+    b.tabIndex = i + 1 === (rating || 1) ? 0 : -1;
+  });
   paint();
-  const ta = el("textarea", { class: "input", maxlength: "600", placeholder: t("commentPh"), "aria-label": t("commentPh") });
+  const ta = el("textarea", { class: "input", id: "reviewText", maxlength: "600", placeholder: t("commentPh") });
   ta.value = mine ? mine.comment : "";
   const form = el("form", { class: "review-form", onsubmit: async (e) => {
     e.preventDefault();
@@ -439,13 +517,17 @@ async function renderReviews(h, box) {
       toast(t("reviewSaved")); viewHospital(h.id);
     } catch (err) { toast(err.message); }
   } },
-    el("div", { class: "field-label", text: mine ? t("editReview") : t("writeReview") }),
-    el("div", { class: "star-pick", role: "group", "aria-label": t("yourRating") }, starBtns), ta,
+    el("h3", { class: "field-label", text: mine ? t("editReview") : t("writeReview") }),
+    el("div", { class: "star-pick", role: "radiogroup", "aria-label": t("yourRating") }, starBtns),
+    el("label", { class: "sr-only", for: "reviewText", text: t("commentPh") }), ta,
     el("p", { class: "note", text: t("reviewNote") }),
     el("div", { class: "row-end" },
       mine ? el("button", { class: "text-btn", type: "button", onclick: async () => {
-        await api(`/api/hospitals/${encodeURIComponent(h.id)}/reviews/mine`, { method: "DELETE", auth: true });
-        rankState.data = null; viewHospital(h.id);
+        if (!confirm(t("confirmDelete"))) return;
+        try {
+          await api(`/api/hospitals/${encodeURIComponent(h.id)}/reviews/mine`, { method: "DELETE", auth: true });
+          rankState.data = null; viewHospital(h.id);
+        } catch (err) { toast(err.message); }
       } }, t("deleteReview")) : null,
       el("button", { class: "primary-btn", type: "submit" }, t("postReview"))));
   formSlot.append(form);
@@ -466,20 +548,21 @@ function viewHelp() {
 
   if (f.step === "idle" || f.step === "recording") {
     const rec = f.step === "recording";
-    parts.push(el("section", { class: "help", style: "border:none" },
+    parts.push(el("section", { class: "help flat" },
       el("h1", { text: t("helpTitle") }), el("p", { text: rec ? t("tapStop") : t("helpSub") }),
       el("button", { class: `mic${rec ? " rec" : ""}`, type: "button", "aria-label": rec ? t("stopSpeaking") : t("startSpeaking"), onclick: toggleRecording },
         svg(rec ? ICON.stop : ICON.mic)),
-      el("div", { class: "mic-label" }, rec ? t("listening") : t("startSpeaking"), " ", el("span", { class: "timer", id: "timer" })),
+      el("div", { class: "mic-label" }, rec ? t("listening") : t("startSpeaking"), " ", el("span", { class: "timer", id: "timer", "aria-hidden": "true" })),
+      el("p", { class: "note privacy", text: t("voicePrivacy") }),
       rec ? null : el("button", { class: "text-btn", type: "button", onclick: () => { S.flow = { ...f, step: "confirm", typed: true }; viewHelp(); } }, t("typeInstead"))));
   } else if (f.step === "transcribing") {
-    parts.push(el("ul", { class: "progress" }, el("li", { class: "now", text: t("understanding") })));
+    parts.push(el("ul", { class: "progress", "aria-live": "polite" }, el("li", { class: "now", text: t("understanding") })));
   } else if (f.step === "confirm") {
     const ta = el("textarea", { class: "input", id: "transcript", rows: "5", maxlength: "3000", placeholder: t("writeHere"), "aria-label": t("writeHere") });
     ta.value = f.text || "";
     parts.push(el("section", { class: "flow" },
       f.typed ? null : el("p", { class: "field-label", text: t("checkText") }), ta,
-      el("button", { class: "primary-btn wide", type: "button", style: "margin-top:12px", onclick: () => {
+      el("button", { class: "primary-btn wide mt", type: "button", onclick: () => {
         const text = ta.value.trim();
         if (text.length < 3) { toast(t("tooShort")); return; }
         makeReport(text);
@@ -487,18 +570,20 @@ function viewHelp() {
       el("div", { class: "center" }, el("button", { class: "text-btn", type: "button", onclick: () => { S.flow = { step: "idle", text: "", alarm: f.alarm }; viewHelp(); } }, t("speakAgain")))));
     setTimeout(() => ta.focus(), 50);
   } else if (f.step === "working") {
-    parts.push(el("ul", { class: "progress", id: "progress" }, t("working").map((s, i) => el("li", { class: i === 0 ? "now" : "", text: s }))));
+    parts.push(el("ul", { class: "progress", id: "progress", "aria-live": "polite" }, t("working").map((s, i) => el("li", { class: i === 0 ? "now" : "", text: s }))),
+      el("p", { class: "note center", text: t("mayTake") }));
   }
   fill(v, parts);
   if (startRecordingSoon && f.step === "idle") { startRecordingSoon = false; toggleRecording(); }
 }
 
-function alarmBox(flags, animal = false) {
+function alarmBox(flags, animal = false, vetSearchUrl = null) {
   const f = flags[0] || {};
   const label = S.lang === "ne" ? (f.label_ne || f.label || "") : (f.label_en || f.label || "");
   if (animal) {  // animal danger signs: go to a vet (102 is the human ambulance)
     const action = S.lang === "ne" ? (f.action_ne || f.action || "") : (f.action_en || f.action || "");
-    return el("div", { class: "alarm", role: "alert" }, el("div", {}, el("strong", { text: t("vetAlarmTitle") }), el("span", { text: label }), action ? el("span", { text: action }) : null));
+    return el("div", { class: "alarm", role: "alert" }, el("div", {}, el("strong", { text: t("vetAlarmTitle") }), el("span", { text: label }), action ? el("span", { text: action }) : null),
+      vetSearchUrl ? el("a", { href: vetSearchUrl, target: "_blank", rel: "noopener" }, t("findVets"), newTab()) : null);
   }
   return el("div", { class: "alarm", role: "alert" },
     el("div", {}, el("strong", { text: t("emergencyTitle") }), el("span", { text: label })),
@@ -520,7 +605,7 @@ async function toggleRecording() {
   Rec.tick = setInterval(() => {
     const s = Math.floor((Date.now() - Rec.started) / 1000);
     const n = $("timer"); if (n) n.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-    if (s >= 120 && Rec.media.state === "recording") Rec.media.stop();
+    if (s >= 120 && Rec.media.state === "recording") { toast(t("autoStopped")); Rec.media.stop(); }
   }, 500);
 }
 
@@ -529,12 +614,12 @@ async function onRecorded() {
   Rec.stream.getTracks().forEach((tr) => tr.stop());
   const type = Rec.media.mimeType || "audio/webm";
   const blob = new Blob(Rec.chunks, { type });
-  if (blob.size < 1500) { S.flow = { step: "idle", text: "" }; viewHelp(); return; }
+  if (blob.size < 1500) { toast(t("tooShortVoice")); S.flow = { step: "idle", text: "" }; viewHelp(); return; }
   S.flow = { ...S.flow, step: "transcribing" }; viewHelp();
   try {
     const fd = new FormData();
     fd.append("audio", blob, `voice.${type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm"}`);
-    const r = await api("/api/transcribe", { method: "POST", form: fd, auth: true });
+    const r = await api("/api/transcribe", { method: "POST", form: fd, auth: true, timeout: SLOW });
     const hit = r.safety && r.safety.is_emergency;
     S.flow = { step: "confirm", text: r.text, alarm: hit ? r.safety.flags : S.flow.alarm,
       alarmAnimal: hit ? r.safety.subject === "animal" : S.flow.alarmAnimal };
@@ -554,14 +639,13 @@ async function makeReport(text) {
   // Nepali words (spoken Nepali is transcribed in Devanagari) get a Nepali report, even if the app is in English.
   const lang = /[\u0900-\u097F]/.test(text) ? "ne" : S.lang;
   try {
-    const r = await api("/api/report", { method: "POST", auth: true, body: { text, lang, ...placeParams() } });
+    const r = await api("/api/report", { method: "POST", auth: true, body: { text, lang, ...placeParams() }, timeout: SLOW });
     if (r.lang !== S.lang) { S.lang = r.lang; store.set("ss_lang", S.lang); renderHeader(); }  // headings match the report
     clearInterval(adv);
     saveReports({ id: r.id, [r.lang]: r });
     translationFor(r.lang === "ne" ? "en" : "ne").catch(() => {});  // prepare the other language in the background
     S.flow = { step: "idle", text: "" };
-    Voice.autoRead = true; // the person spoke, so they get the answer spoken back
-    location.hash = "#/report";
+    location.hash = "#/report";  // no autoplay: the "Read the report aloud" button is at the top of the report
   } catch (e) {
     clearInterval(adv);
     const hit = e.data && e.data.safety && e.data.safety.is_emergency;
@@ -574,7 +658,7 @@ async function makeReport(text) {
 // ------------------------------------------------------------------ read aloud
 // Gemini voice from the server (natural Nepali on every device). If that fails, the browser's own voice is used.
 const SPEECH_OK = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
-const Voice = { playing: false, loading: false, autoRead: false, audio: null, run: 0, cache: {} };  // cache: "<id>:<lang>" -> audio URL
+const Voice = { playing: false, loading: false, audio: null, run: 0, cache: {} };  // cache: "<id>:<lang>" -> audio URL
 
 // Browser fallback: Nepali voice first; Hindi voices read Devanagari closely enough when no Nepali voice is installed.
 function pickVoice(lang) {
@@ -639,7 +723,7 @@ async function toggleListen() {
   let url = Voice.cache[key];
   try {
     if (!url) {
-      const res = await api("/api/report/speech", { method: "POST", auth: true, body: r, raw: true });
+      const res = await api("/api/report/speech", { method: "POST", auth: true, body: r, raw: true, timeout: SLOW });
       url = Voice.cache[key] = URL.createObjectURL(await res.blob());
     }
   } catch {
@@ -669,7 +753,7 @@ function translationFor(lang) {
   if (R[lang]) return Promise.resolve(R[lang]);
   const key = `${R.id}:${lang}`;
   if (!pendingTranslation[key]) {
-    pendingTranslation[key] = api("/api/report/translate", { method: "POST", auth: true, body: { report: R.ne || R.en, target: lang } })
+    pendingTranslation[key] = api("/api/report/translate", { method: "POST", auth: true, body: { report: R.ne || R.en, target: lang }, timeout: SLOW })
       .then((tr) => { if (S.reports && S.reports.id === R.id) saveReports({ ...S.reports, [lang]: tr }); return tr; })
       .finally(() => { delete pendingTranslation[key]; });
   }
@@ -691,39 +775,40 @@ function viewAnimalReport(r) {
   const top = r.hospitals[0];
   const parts = [
     el("a", { class: "back", href: "#/" }, svg(ICON.back), t("back")),
-    r.urgency === "emergency" && r.safety_flags.length ? alarmBox(r.safety_flags, true) : null,
+    r.urgency === "emergency" && r.safety_flags.length ? alarmBox(r.safety_flags, true, r.vet_search_url) : null,
     el("h1", { class: "r-title", text: r.title }),
     el("div", { class: `r-urgency u-${r.urgency}` }, el("b", { text: r.urgency_text }), r.urgency_reason),
+    el("p", { class: "ai-note", text: t("aiNote") }),
     el("p", { text: r.summary }),
     reportTools(),
     block(t("doNow"), stepsList(r.do_now)),
     el("section", { class: "block" }, el("h2", { text: t("goToVet") }),
       top ? el("div", { class: "pick" },
-        el("div", { class: "map-box", style: "border:none;border-radius:0" }, mapFrame(top.map_embed_url, top.name)),
+        el("div", { class: "map-box flush" }, mapFrame(top.map_embed_url, top.name)),
         el("div", { class: "pick-body" },
           el("div", { class: "pick-name", text: hName(top) }),
           el("div", { class: "row-sub", text: `${top.city} · ${top.type_label}${top.distance_km != null ? ` · ${top.distance_km} ${t("km")}` : ""}` }),
           !top.verified ? el("div", { class: "row-meta" }, el("span", { class: "tag grey", text: t("unverified") })) : null,
           top.why ? el("p", { text: top.why }) : null,
           el("div", { class: "actions" },
-            el("a", { class: "primary-btn", href: top.directions_url, target: "_blank", rel: "noopener" }, svg(ICON.nav), t("directions")),
-            top.phone ? el("a", { class: "secondary-btn", href: `tel:${top.phone}` }, t("call")) : null))) : null,
+            el("a", { class: "primary-btn", href: top.directions_url, target: "_blank", rel: "noopener" }, svg(ICON.nav), t("directions"), newTab()),
+            top.phone ? el("a", { class: "secondary-btn", href: `tel:${top.phone}` }, t("call")) : null),
+          el("p", { class: "note call-first", text: t("callFirst") }))) : null,
       r.hospitals.slice(1).map((h) => el("div", { class: "other" },
         el("div", { class: "other-head" }, el("b", { text: hName(h) }), h.distance_km != null ? el("b", { text: `${h.distance_km} ${t("km")}` }) : null),
-        h.why ? el("p", { style: "margin:2px 0", text: h.why }) : null,
-        el("a", { href: h.directions_url, target: "_blank", rel: "noopener" }, t("directions")))),
-      r.district_office ? el("div", { class: "dept-box", style: "margin-top:12px" }, el("b", { text: t("vetOffice") }), el("p", { text: r.district_office.name }),
-        el("a", { href: r.district_office.search_url, target: "_blank", rel: "noopener" }, t("googleMaps"))) : null,
-      el("a", { class: "secondary-btn wide", style: "margin-top:12px", href: r.vet_search_url, target: "_blank", rel: "noopener" }, svg(ICON.pin), t("findVets"))),
+        h.why ? el("p", { class: "tight", text: h.why }) : null,
+        el("a", { href: h.directions_url, target: "_blank", rel: "noopener" }, t("directions"), newTab()))),
+      r.district_office ? el("div", { class: "dept-box mt" }, el("b", { text: t("vetOffice") }), el("p", { text: r.district_office.name }),
+        el("a", { href: r.district_office.search_url, target: "_blank", rel: "noopener" }, t("googleMaps"), newTab())) : null,
+      el("a", { class: "secondary-btn wide mt", href: r.vet_search_url, target: "_blank", rel: "noopener" }, svg(ICON.pin), t("findVets"), newTab())),
   ];
-  if (r.travel_tip) parts.push(el("p", { class: "note", style: "font-size:17px;color:var(--ink)", text: r.travel_tip }));
+  if (r.travel_tip) parts.push(el("p", { class: "tip", text: r.travel_tip }));
   parts.push(block(t("careAtHome"), plainList(r.care_at_home)));
   if (r.food_tips.length) parts.push(block(t("foodTips"), plainList(r.food_tips)));
   parts.push(block(t("tellVet"), plainList(r.tell_the_vet)), block(t("vetWarning"), plainList(r.warning_signs)));
   parts.push(block(t("youSaid"), el("blockquote", { class: "said", text: r.transcript })));
   parts.push(el("p", { class: "disclaimer", text: r.disclaimer }), reportActions());
   fill($("view"), parts);
-  if (Voice.autoRead) { Voice.autoRead = false; toggleListen(); }
 }
 
 function viewReport() {
@@ -755,6 +840,7 @@ function viewPersonReport(r) {
     r.urgency === "emergency" ? alarmBox(r.safety_flags.length ? r.safety_flags : [{ label: r.urgency_text }]) : null,
     el("h1", { class: "r-title", text: r.title }),
     el("div", { class: `r-urgency u-${r.urgency}` }, el("b", { text: r.urgency_text }), r.urgency_reason),
+    el("p", { class: "ai-note", text: t("aiNote") }),
     el("p", { text: r.summary }),
     reportTools(),
     block(t("doNow"), stepsList(r.do_now)),
@@ -764,16 +850,20 @@ function viewPersonReport(r) {
   if (top) {
     parts.push(el("section", { class: "block" }, el("h2", { text: t("goTo") }),
       el("div", { class: "pick" },
-        el("div", { class: "map-box", style: "border:none;border-radius:0" }, mapFrame(top.map_embed_url, top.name)),
+        el("div", { class: "map-box flush" }, mapFrame(top.map_embed_url, top.name)),
         el("div", { class: "pick-body" },
           el("div", { class: "pick-name", text: hName(top) }),
           el("div", { class: "row-sub", text: `${top.city}, ${top.district} · ${top.type_label}${top.distance_km != null ? ` · ${top.distance_km} ${t("km")}` : ""}` }),
           el("div", { class: "row-meta" }, ratingLine(top.rating), top.emergency_24h ? el("span", { class: "tag", text: t("er24") }) : null,
-            top.health_insurance ? el("span", { class: "tag", text: t("insurance") }) : null),
+            top.health_insurance ? el("span", { class: "tag", text: t("insurance") }) : null,
+            !top.verified ? el("span", { class: "tag grey", text: t("unverified") }) : null),
           top.why ? el("p", { text: top.why }) : null,
           el("div", { class: "actions" },
-            el("a", { class: "primary-btn", href: top.directions_url, target: "_blank", rel: "noopener" }, svg(ICON.nav), t("directions")),
-            el("a", { class: "secondary-btn", href: `#/h/${encodeURIComponent(top.id)}` }, t("hospitalPage")))))));
+            el("a", { class: "primary-btn", href: top.directions_url, target: "_blank", rel: "noopener" }, svg(ICON.nav), t("directions"), newTab()),
+            top.phone ? el("a", { class: "secondary-btn", href: `tel:${top.phone}` }, t("call"))
+              : el("a", { class: "secondary-btn", href: `#/h/${encodeURIComponent(top.id)}` }, t("hospitalPage"))),
+          el("p", { class: "note call-first", text: t("callFirst") }),
+          top.phone ? el("a", { class: "text-btn", href: `#/h/${encodeURIComponent(top.id)}` }, t("hospitalPage")) : null))));
     parts.push(block(t("inside"), top.inside.specific ? el("p", { text: top.inside.specific }) : null, stepsList(top.inside.steps)));
     parts.push(block(t("billing"), stepsList(top.billing.steps),
       top.billing.insurance_steps.length ? [el("h3", { text: t("withInsurance") }), stepsList(top.billing.insurance_steps)] : null,
@@ -783,23 +873,22 @@ function viewPersonReport(r) {
     parts.push(block(t("otherOptions"), r.hospitals.slice(1).map((h) => el("div", { class: "other" },
       el("div", { class: "other-head" }, el("a", { href: `#/h/${encodeURIComponent(h.id)}`, class: "row-name", text: hName(h) }),
         h.distance_km != null ? el("b", { text: `${h.distance_km} ${t("km")}` }) : null),
-      h.why ? el("p", { style: "margin:2px 0", text: h.why }) : null,
-      el("a", { href: h.directions_url, target: "_blank", rel: "noopener" }, t("directions"))))));
+      h.why ? el("p", { class: "tight", text: h.why }) : null,
+      el("a", { href: h.directions_url, target: "_blank", rel: "noopener" }, t("directions"), newTab())))));
   }
-  if (r.travel_tip) parts.push(el("p", { class: "note", style: "font-size:17px;color:var(--ink)", text: r.travel_tip }));
+  if (r.travel_tip) parts.push(el("p", { class: "tip", text: r.travel_tip }));
   parts.push(block(t("bring"), plainList(r.what_to_bring)), block(t("ask"), plainList(r.questions_for_doctor)), block(t("warning"), plainList(r.warning_signs)));
   if (r.schemes && r.schemes.length) parts.push(block(t("schemes"), r.schemes.map((s) => el("p", {}, el("b", { text: `${s.name}. ` }), s.summary, el("br"), el("span", { class: "note", text: s.how })))));
   parts.push(block(t("youSaid"), el("blockquote", { class: "said", text: r.transcript })));
   parts.push(el("p", { class: "disclaimer", text: r.disclaimer }));
   parts.push(reportActions());
   fill(v, parts);
-  if (Voice.autoRead) { Voice.autoRead = false; toggleListen(); }
 }
 
 async function downloadPdf() {
   toast(t("downloading"));
   try {
-    const res = await api("/api/report/pdf", { method: "POST", auth: true, body: S.report, raw: true });
+    const res = await api("/api/report/pdf", { method: "POST", auth: true, body: S.report, raw: true, timeout: SLOW });
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = el("a", { href: url, download: `hospital-guide-${S.report.generated_at.slice(0, 10)}.pdf` });
@@ -813,7 +902,7 @@ async function emailReport() {
   if (!S.user.email) { saveEmail.then = emailReport; openAccount(t("addEmailFirst")); return; }
   toast(t("emailing"));
   try {
-    const r = await api("/api/report/email", { method: "POST", auth: true, body: S.report });
+    const r = await api("/api/report/email", { method: "POST", auth: true, body: S.report, timeout: SLOW });
     toast(r.delivered ? t("emailSent", r.sent_to) : t("emailSavedOnly"));
   } catch (e) { toast(e.message); }
 }
@@ -828,15 +917,21 @@ function route() {
   $("view").classList.toggle("wide", home);
   if (m) viewHospital(decodeURIComponent(m[1]));
   else if (hash.startsWith("#/help")) viewHelp();
-  else if (hash.startsWith("#/report")) { if (!S.user) { location.hash = "#/"; return; } viewReport(); }
+  else if (hash.startsWith("#/report")) { if (!S.user) { toast(t("loginNeededReport")); location.hash = "#/"; return; } viewReport(); }
   else viewHome();
+  // screen readers and keyboards start at the new page, not wherever focus was on the old one
+  if (!document.querySelector("dialog[open]")) $("view").focus({ preventScroll: true });
 }
 
 // ------------------------------------------------------------------ start
 async function start() {
   renderHeader();
   try { S.cfg = await api("/api/config"); }
-  catch { $("view").replaceChildren(el("p", { class: "empty", text: t("netError") })); return; }
+  catch (e) {
+    $("view").replaceChildren(el("div", { class: "empty" }, el("p", { text: e.message }),
+      el("button", { class: "secondary-btn", type: "button", onclick: () => location.reload() }, t("retry"))));
+    return;
+  }
   try { await initAuth(); } catch { /* Firebase not reachable: app still works without login */ }
   renderHeader();
 
@@ -857,6 +952,9 @@ async function start() {
   });
   $("placeSave").addEventListener("click", () => { const d = $("districtSel").value; if (d) setPlace({ district: d }); $("placeSheet").close(); });
   $("placeSheet").addEventListener("close", () => { openPlace.done = null; });
+  for (const id of ["loginSheet", "accountSheet", "placeSheet"]) {
+    $(id).addEventListener("close", () => { const o = $(id).opener; if (o && o.isConnected) o.focus(); });
+  }
   window.addEventListener("hashchange", route);
   route();
 }
