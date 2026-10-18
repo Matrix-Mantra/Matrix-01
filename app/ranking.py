@@ -1,15 +1,20 @@
 """QS-style ranking of every hospital we list, scored only from data the app has.
 
 The scores describe what is *listed* about a hospital (services, access, ratings), not the quality of its care.
-Each indicator is 0-100; the overall score is their weighted average. Patient rating only counts once a hospital
-has MIN_REVIEWS reviews; until then its weight is shared among the other indicators instead of counting as zero.
+Each indicator is 0-100; the overall score is their weighted average.
+
+Patient rating is a Bayesian average: every hospital starts as if it had PRIOR_REVIEWS reviews of PRIOR_STARS
+(neutral), and real reviews pull it toward their true average. A handful of reviews (fake or real) moves the score
+only a little, and there is no review-count cliff to aim for. A fixed neutral prior is used rather than the average
+across all hospitals, because while reviews are few that site-wide average could itself be rigged.
 """
 
 from __future__ import annotations
 
 from . import hospitals
 
-MIN_REVIEWS = 3
+PRIOR_REVIEWS = 10
+PRIOR_STARS = 3.0
 
 # key, weight (%)
 INDICATORS = [
@@ -40,14 +45,20 @@ def _teaching_score(t: str) -> float:
     return 0.0
 
 
+def rating_score(rating: dict | None) -> float:
+    """Bayesian average of the stars, mapped from 1-5 to 0-100. No reviews -> the neutral prior (50)."""
+    n = rating.get("count", 0) if rating else 0
+    stars = (n * rating["avg"] + PRIOR_REVIEWS * PRIOR_STARS) / (n + PRIOR_REVIEWS) if n else PRIOR_STARS
+    return round((stars - 1) / 4 * 100, 1)
+
+
 def indicator_scores(h: dict, max_depts: int, rating: dict | None) -> dict[str, float | None]:
-    rated = rating and rating.get("count", 0) >= MIN_REVIEWS
     return {
         "specialties": round(100 * len(h.get("departments", [])) / max_depts, 1) if max_depts else 0.0,
         "emergency": 100.0 if h.get("emergency_24h") else 0.0,
         "insurance": 100.0 if h.get("health_insurance") else 0.0,
         "teaching": _teaching_score(h.get("type", "")),
-        "rating": round((rating["avg"] - 1) / 4 * 100, 1) if rated else None,
+        "rating": rating_score(rating),
     }
 
 

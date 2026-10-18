@@ -125,7 +125,7 @@ def hospital_ranking(lang: Literal["ne", "en"] = "ne") -> dict:
     rows = ranking.build(summaries_or_empty(), lang)
     return {
         "indicators": [{"key": k, "weight": w} for k, w in ranking.INDICATORS],
-        "min_reviews": ranking.MIN_REVIEWS,
+        "prior_reviews": ranking.PRIOR_REVIEWS,
         "stats": {"hospitals": len(rows), "provinces": len({r["province"] for r in rows if r["province"]}),
                   "emergency_24h": sum(r["emergency_24h"] for r in rows), "verified": sum(r["verified"] for r in rows)},
         "hospitals": rows,

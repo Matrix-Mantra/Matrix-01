@@ -37,6 +37,7 @@ const ICON = {
   down: "M5 20h14v-2H5zM19 9h-4V3H9v6H5l7 7z",
   speaker: "M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06A9 9 0 0 0 14 3.23z",
   mail: "M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 4-8 5-8-5V6l8 5 8-5z",
+  phone: "M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1z",
 };
 
 function fill(node, parts) { node.replaceChildren(...parts.flat(Infinity).filter((x) => x != null && x !== false)); }
@@ -250,9 +251,7 @@ function renderHeader() {
   document.documentElement.lang = S.lang;
   $("brandName").textContent = t("brand");
   $("langBtn").textContent = t("other");
-  $("loginBtn").textContent = t("login");
-  $("sosLabel").textContent = t("call102Short"); $("sosBtn").setAttribute("aria-label", t("emergencyCall"));
-  $("loginBtn").hidden = Boolean(S.user);
+  $("loginBtn").textContent = t("login");  $("loginBtn").hidden = Boolean(S.user);
   $("avatarBtn").hidden = !S.user;
   if (S.user) { $("avatarBtn").textContent = (S.user.name || "?").trim().charAt(0).toUpperCase(); $("avatarBtn").setAttribute("aria-label", S.user.name); }
 }
@@ -308,11 +307,10 @@ function scoreBar(v) {
   return el("span", { class: "rk-score" }, el("span", { class: "rk-bar", "aria-hidden": "true" }, el("i", { style: `width:${v}%` })), el("b", { text: Math.round(v) }));
 }
 
-// Patient rating on a card: real stars as soon as there is a review; the 0-100 score only counts from min_reviews.
-function ratingValue(h, minReviews) {
+// Patient rating on a card: the real stars people gave (the score behind it is a Bayesian average, see ranking.py).
+function ratingValue(h) {
   if (!h.rating || !h.rating.count) return el("span", { class: "muted", text: t("noReviews") });
-  return el("span", { class: "rk-rate" }, starsBadge(h.rating.avg), el("span", { class: "muted", text: ` (${h.rating.count})` }),
-    h.scores.rating == null ? el("small", { class: "rk-rate-note", text: t("ratingNotCounted", minReviews) }) : null);
+  return el("span", { class: "rk-rate" }, starsBadge(h.rating.avg), el("span", { class: "muted", text: ` (${h.rating.count})` }));
 }
 
 function startHelp(recordNow) {
@@ -385,7 +383,7 @@ async function loadRanking() {
     el("div", { class: "rk-stat" }, el("b", { text: n }), el("span", { text: label }))));
   $("rkMethod").replaceChildren(el("h2", { text: t("methodTitle") }), el("p", { text: t("methodIntro") }),
     el("ul", { class: "rk-weights" }, d.indicators.map((i) => el("li", {},
-      el("span", { class: "rk-w", text: `${i.weight}%` }), el("div", {}, el("b", { text: t(`ind_${i.key}`) }), el("p", { text: t(`desc_${i.key}`, d.min_reviews) }))))),
+      el("span", { class: "rk-w", text: `${i.weight}%` }), el("div", {}, el("b", { text: t(`ind_${i.key}`) }), el("p", { text: t(`desc_${i.key}`, d.prior_reviews) }))))),
     el("p", { class: "note", text: t("methodCaveat") }));
   renderRanking();
 }
@@ -399,7 +397,8 @@ function renderRanking() {
     (!rankState.type || h.type_group === rankState.type) &&
     (!rankState.erOnly || h.emergency_24h) &&
     (!q || [h.name, h.name_ne, h.city, h.district, h.province].join(" ").toLowerCase().includes(q)));
-  const byRating = (h) => (h.rating && h.rating.count ? h.rating.avg : -1);
+  // the Bayesian score, so one 5-star review can't jump a hospital to the top of "sort by rating"
+  const byRating = (h) => h.scores.rating + (h.rating ? h.rating.count : 0) / 1e6;
   if (rankState.sort === "az") rows = [...rows].sort((a, b) => hName(a).localeCompare(hName(b)));
   else if (rankState.sort === "rating") rows = [...rows].sort((a, b) => byRating(b) - byRating(a) || a.rank - b.rank);
   else if (rankState.sort === "specialties") rows = [...rows].sort((a, b) => b.departments - a.departments || a.rank - b.rank);
@@ -418,7 +417,7 @@ function renderRanking() {
       h.health_insurance ? el("span", { class: "chip", text: t("insurance") }) : null),
     el("div", { class: "rk-inds" }, ["specialties", "emergency", "insurance", "teaching"].map((k) =>
       el("div", { class: "rk-ind" }, el("span", { class: "rk-ind-label", text: t(`ind_${k}`) }), scoreBar(h.scores[k]))),
-      el("div", { class: "rk-ind" }, el("span", { class: "rk-ind-label", text: t("ind_rating") }), ratingValue(h, d.min_reviews))),
+      el("div", { class: "rk-ind" }, el("span", { class: "rk-ind-label", text: t("ind_rating") }), ratingValue(h))),
     el("span", { class: "rk-go", "aria-hidden": "true", text: "→" }))));
   const left = rows.length - rankState.shown;
   if (left > 0) {
@@ -587,7 +586,7 @@ function alarmBox(flags, animal = false, vetSearchUrl = null) {
   }
   return el("div", { class: "alarm", role: "alert" },
     el("div", {}, el("strong", { text: t("emergencyTitle") }), el("span", { text: label })),
-    el("a", { href: "tel:102" }, t("call102")));
+    el("a", { href: "tel:102" }, svg(ICON.phone), t("call102")));
 }
 
 async function toggleRecording() {
