@@ -6,7 +6,8 @@
         "supportEmail": "rishikeshgautam59@gmail.com",
         "authorizedRedirectUris": [
           "https://projects-4e426.firebaseapp.com/__/auth/handler",
-          "http://localhost"
+          "http://localhost",
+          "https://matrix.hospitalsofnepal.com"
         ]
       }
     }
