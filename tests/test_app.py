@@ -167,16 +167,22 @@ def test_ranking_scores_and_ties(client):
     for a, b in zip(rows, rows[1:]):  # equal scores share a rank, QS style
         assert (b["rank"] == a["rank"]) == (b["overall"] == a["overall"])
         assert b["tied"] or b["rank"] != a["rank"]
-    assert all(r["scores"]["rating"] is None for r in rows)  # no reviews yet -> pending, weight re-shared
+    assert all(r["scores"]["rating"] == 50.0 for r in rows)  # no reviews yet -> neutral 3-star prior
     s = {"specialties": 50.0, "emergency": 100.0, "insurance": 0.0, "teaching": 0.0, "rating": None}
     assert ranking.overall(s) == round((50 * 35 + 100 * 20) / 80, 1)
 
 
-def test_ranking_counts_ratings_after_min_reviews(client):
-    for i, name in enumerate(["A One", "B Two", "C Three"]):
+def test_ranking_rating_is_bayesian(client):
+    from app import ranking
+    # each 5-star review moves the score a little (no cliff); 3 fake reviews are far from a perfect 100
+    expected = [54.5, 58.3, 61.5]  # ((n*5 + 10*3) / (n + 10) - 1) / 4 * 100
+    for name, want in zip(["A One", "B Two", "C Three"], expected):
         client.post("/api/hospitals/bir/reviews", json={"rating": 5}, headers=bearer(name))
         bir = next(r for r in client.get("/api/ranking").json()["hospitals"] if r["id"] == "bir")
-        assert (bir["scores"]["rating"] == 100.0) == (i == 2)
+        assert bir["scores"]["rating"] == want
+    assert ranking.rating_score(None) == 50.0
+    assert ranking.rating_score({"avg": 1.0, "count": 1}) == 45.5  # one bad review can't sink a hospital either
+    assert ranking.rating_score({"avg": 4.0, "count": 1000}) == 74.8  # many reviews -> close to the true 4 stars (75)
 
 
 # ------------------------------------------------------------------ report pipeline
