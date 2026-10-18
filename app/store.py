@@ -176,6 +176,41 @@ class FirestoreStore:
         return self.get_user(uid)
 
 
+def migrate_sqlite_to_firestore(sqlite_path: str, fs: FirestoreStore) -> dict[str, int]:
+    """Copy reviews and users from a SQLite file into Firestore.
+
+    Safe to run on every start-up: documents are only created when missing, so anything already in
+    Firestore (including newer edits made there) is never overwritten.
+    """
+    from google.api_core.exceptions import AlreadyExists
+
+    copied = {"reviews": 0, "users": 0}
+    c = sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
+    c.row_factory = sqlite3.Row
+    try:
+        reviews = [dict(r) for r in c.execute("SELECT * FROM reviews")]
+        users = [dict(r) for r in c.execute("SELECT * FROM users")]
+    finally:
+        c.close()
+    for r in reviews:
+        doc = {k: r[k] for k in ("hospital_id", "uid", "author", "rating", "comment", "created_at", "updated_at")}
+        try:
+            fs._ref(r["hospital_id"], r["uid"]).create(doc)
+            copied["reviews"] += 1
+        except AlreadyExists:
+            pass
+    for u in users:
+        doc = {k: u[k] for k in ("uid", "name", "email", "created_at", "last_login_at", "login_count")}
+        try:
+            fs.db.collection("users").document(u["uid"]).create(doc)
+            copied["users"] += 1
+        except AlreadyExists:
+            pass
+    if copied["reviews"]:
+        fs._cache = None
+    return copied
+
+
 @lru_cache(maxsize=1)
 def get_store():
     if config.STORE == "firestore":

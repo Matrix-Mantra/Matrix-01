@@ -115,7 +115,7 @@ async function initAuth() {
       authMod.onAuthStateChanged(auth, async (u) => {
         S.user = u ? { name: u.displayName || (u.email || "").split("@")[0], email: u.email || "" } : null;
         renderHeader(); resolve();
-        if (u) syncLogin();
+        if (u) syncLogin().catch((err) => console.error("Saving the account failed", err));
         if (u && afterLogin) { const f = afterLogin; afterLogin = null; f(); }
       });
     });
@@ -162,7 +162,10 @@ async function googleLogin() {
     if (e && (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment")) {
       await signInWithRedirect(auth, provider);
     } else if (!(e && e.code === "auth/popup-closed-by-user")) {
-      $("loginError").textContent = t("loginFailed"); $("loginError").hidden = false;
+      console.error("Google sign-in failed", e);
+      // the Firebase code (e.g. auth/unauthorized-domain) tells us what to fix
+      $("loginError").textContent = `${t("loginFailed")}${e && e.code ? ` (${e.code})` : ""}`;
+      $("loginError").hidden = false;
     }
   }
 }

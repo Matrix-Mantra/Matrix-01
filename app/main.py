@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Literal
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Response, UploadFile
@@ -13,12 +15,25 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import ai, config, hospitals, mailer, pdf, ranking, report, safety, vets
 from .auth import User, check_limit, current_user
-from .store import get_store
+from .store import get_store, migrate_sqlite_to_firestore
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 log = logging.getLogger("swasthya")
 
-app = FastAPI(title="Matrix", version="2.0.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Moving from SQLite to Firestore: copy local reviews/users that Firestore doesn't have yet.
+    if config.STORE == "firestore" and Path(config.SQLITE_PATH).is_file():
+        try:
+            copied = migrate_sqlite_to_firestore(config.SQLITE_PATH, get_store())
+            log.info("SQLite -> Firestore migration: %s reviews, %s users copied", copied["reviews"], copied["users"])
+        except Exception:
+            log.exception("SQLite -> Firestore migration failed; the app keeps running")
+    yield
+
+
+app = FastAPI(title="Matrix", version="2.0.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
 
 
