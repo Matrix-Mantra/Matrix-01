@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import ai, config, hospitals, mailer, pdf, ranking, report, safety, vets
 from .auth import User, check_limit, current_user
-from .store import get_store, migrate_sqlite_to_firestore
+from .store import get_store, migrate_sqlite_to_firestore, reviews_or_empty, summaries_or_empty
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 log = logging.getLogger("swasthya")
@@ -122,7 +122,7 @@ def update_me(body: EmailIn, user: User = Depends(current_user)) -> dict:
 
 @app.get("/api/ranking")
 def hospital_ranking(lang: Literal["ne", "en"] = "ne") -> dict:
-    rows = ranking.build(get_store().summaries(), lang)
+    rows = ranking.build(summaries_or_empty(), lang)
     return {
         "indicators": [{"key": k, "weight": w} for k, w in ranking.INDICATORS],
         "min_reviews": ranking.MIN_REVIEWS,
@@ -147,7 +147,7 @@ def list_hospitals(
 ) -> dict:
     origin = hospitals.origin_from(lat, lng) if lat is not None and lng is not None else hospitals.origin_from(district=near)
     rows = hospitals.search(q=q, district=district, department=department, origin=origin, lang=lang)
-    ratings = get_store().summaries()
+    ratings = summaries_or_empty()
     for r in rows:
         r["rating"] = ratings.get(r["id"])
         r.pop("departments", None)  # keep the list light
@@ -171,8 +171,8 @@ def hospital_detail(hospital_id: str, lang: Literal["ne", "en"] = "ne",
     view["map_embed_url"] = hospitals.map_embed_url(h)
     view["billing"] = hospitals.billing_info(h, lang)
     view["inside"] = hospitals.inside_steps(h, None, lang)
-    view["rating"] = get_store().summaries().get(hospital_id)
-    view["reviews"] = get_store().list_reviews(hospital_id)
+    view["rating"] = summaries_or_empty().get(hospital_id)
+    view["reviews"] = reviews_or_empty(hospital_id)
     for rv in view["reviews"]:
         rv.pop("uid", None)
     return view

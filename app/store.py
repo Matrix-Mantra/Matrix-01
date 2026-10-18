@@ -10,6 +10,7 @@ FirestoreStore - Cloud Run (Cloud Run disks are temporary, so production must us
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 import time
@@ -216,3 +217,22 @@ def get_store():
     if config.STORE == "firestore":
         return FirestoreStore()
     return SqliteStore(config.SQLITE_PATH)
+
+
+# Public pages (hospital list, detail, ranking, report) must keep working when the database is
+# unreachable (e.g. missing Firestore permission): they show hospitals without ratings instead of failing.
+
+def summaries_or_empty() -> dict[str, dict]:
+    try:
+        return get_store().summaries()
+    except Exception:
+        logging.getLogger("swasthya").exception("Could not load rating summaries")
+        return {}
+
+
+def reviews_or_empty(hospital_id: str) -> list[dict]:
+    try:
+        return get_store().list_reviews(hospital_id)
+    except Exception:
+        logging.getLogger("swasthya").exception("Could not load reviews for %s", hospital_id)
+        return []
